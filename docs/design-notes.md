@@ -45,17 +45,43 @@ rather than misfire — this was verified, not assumed.
 The electricityinfo integration (ROS0221 node) exposes several price
 sensors:
 - `*_c_kwh_day_ahead_forecast` — forecast, made ahead of time
-- `*_c_kwh_intraday_forecast` — updates through the day, closest to "live"
-  but still a forecast
+- `*_c_kwh_live_price` — updates through the day, closest to the actual
+  current-period price
 - `*_c_kwh_settled_price` — the **final** price for a trading period, but
   runs **one period behind** real time (confirmed via its `history`
   attribute showing period N-1 while N is in progress)
 
 Decision: bill charges are calculated from *final* prices, so settled is
 the correct source for anything that should match the bill
-(`electricity_spot_price` → import/export price sensors). This means the
-live price sensors reflect the last completed 30-min period, not the exact
-current instant — a deliberate accuracy-over-recency tradeoff.
+(`electricity_spot_price` → `electricity_import_price` / `electricity_export_price`
+→ the cost/earnings accumulators). This means these sensors reflect the
+last completed 30-min period, not the exact current instant — a deliberate
+accuracy-over-recency tradeoff, acceptable for cost accounting since every
+kWh still eventually gets its own correct settled price attributed to it
+(see "Known lag in the cost accumulator" below for the current limitation
+there).
+
+Verified (2026-09-23, via the settled price sensor's `history` attribute):
+at 20:47, 17 minutes into trading period 42 (20:30–21:00), the sensor's
+*current state* still equalled trading period 41's settled price — the
+period that had just finished. So the lag isn't just "slightly stale," it's
+a full hold at the previous period's price for the entire duration of the
+current period, jumping only at the boundary. Rotation itself is clean —
+48 distinct periods/day, sequential `trading_period` values, correct
+midnight wraparound, no repeats — so the mechanism works as documented,
+it's just genuinely a period behind by design.
+
+That lag makes settled price wrong for a live on/off decision (deciding
+"should the battery charge *right now*" using a price already up to 30
+minutes stale means reacting late to price swings — and today's real data
+showed swings as large as 0.8 to 19.3 c/kWh between adjacent periods).
+So the battery grid-charge advisory's live decision inputs
+(`battery_grid_charge_recommended`'s `self_use_triggered` price check,
+`battery_arbitrage_margin`'s `charge_price`) use a separate
+**`electricity_import_price_live`** sensor sourced from
+`sensor.ros0221_c_kwh_live_price` instead — closest-to-live, not settled. The
+settled-price-based `electricity_import_price` is kept as-is and still
+used everywhere cost accounting needs to match the bill.
 
 The day-ahead forecast is used separately for the battery advisory's
 window-average and arbitrage sensors, since those need to know what's
@@ -132,6 +158,11 @@ design choices)
    (which resolves to the settled price). The forecast-average sensor is
    kept and renamed "Forecast overnight window price" — it's now only
    used for the nightly accuracy comparison, not the live decision.
+   **Refined again (2026-09-23):** settled price turned out to lag real
+   time by up to a full trading period (see "Price source" above), so the
+   live decision now uses `electricity_import_price_live`
+   (`ros0221_c_kwh_live_price`-based) instead — settled remains correct for cost
+   accounting, just not for a live on/off decision.
 2. **Switch/recommendation could desync after a restart.** The automation
    that syncs `switch.al2002118050331_grid_charge_enabled` to the
    recommendation sensor only triggered on *state change* of the
@@ -143,15 +174,18 @@ design choices)
    self-use case decided to charge, it charged all the way to
    `number.al2002118050331_bathighcap` (100%), which can crowd out
    tomorrow's free solar if the forecast was simply wrong, or just isn't
-   worth it if only a small top-up was needed. Planned fix (not yet
-   deployed as of last session): cap the target lower for self-use nights
-   via two new `input_number` helpers (`battery_overnight_charge_cap` /
-   `battery_normal_charge_cap`), with the automation writing to
-   `number.al2002118050331_bathighcap` on start/stop. Arbitrage nights
-   keep the full 100% cap since more stored energy = more profit there.
-   **This was still outstanding when the repo move happened — check
-   whether it made it into packages/electricity_pricing.yaml before
-   trusting the overnight cap behavior.**
+   worth it if only a small top-up was needed. **Fixed** (2026-09-23): two
+   new `input_number` helpers, `battery_overnight_charge_cap` (default 80%)
+   and `battery_normal_charge_cap` (default 100%). The
+   "Battery grid charge - follow recommendation" automation now writes to
+   `number.al2002118050331_bathighcap` on start (using the
+   `arbitrage_triggered` attribute on `binary_sensor.battery_grid_charge_recommended`
+   to pick which cap — arbitrage nights get the normal/full cap, self-use
+   nights get the overnight cap) and restores the normal cap on stop. A
+   separate "Battery charge cap - daily backstop restore" automation force-
+   restores the normal cap at 08:00 every day regardless of state, in case
+   the follow-recommendation automation fails mid-window (crash, network
+   blip) after lowering the cap.
 
 ### Legacy automations, now retired
 
@@ -190,11 +224,6 @@ than half-hourly prices do.
 
 ## Known limitations / things not yet done
 
-- **Safety net for the charge-cap automation** (item 3 above) — if the
-  automation fails mid-window (crash, network blip) after lowering
-  `bathighcap`, nothing currently restores it automatically. A proposed
-  fix (not yet built): a daily 08:00 automation that force-restores the
-  normal cap regardless of state, as a backstop.
 - **Rate constants will drift.** No alerting if Vector's rates or the
   loss factor change again.
 - **`offset:` for utility meters** is commented out — bill cycle start day

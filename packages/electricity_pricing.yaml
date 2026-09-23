@@ -85,6 +85,29 @@ input_number:
     mode: box
     icon: mdi:cash-multiple
 
+  # Charge caps: self-use nights target a lower cap so a wrong solar forecast
+  # doesn't crowd out tomorrow's free solar. Arbitrage nights, and the daily
+  # backstop, keep the normal (full) cap. `initial` matters here since the
+  # `min` (50) would otherwise be the default on first creation.
+  battery_overnight_charge_cap:
+    name: Battery overnight (self-use) charge cap
+    min: 50
+    max: 100
+    step: 1
+    initial: 80
+    unit_of_measurement: "%"
+    mode: box
+    icon: mdi:battery-charging-70
+  battery_normal_charge_cap:
+    name: Battery normal charge cap
+    min: 50
+    max: 100
+    step: 1
+    initial: 100
+    unit_of_measurement: "%"
+    mode: box
+    icon: mdi:battery-charging-100
+
 template:
   # --- Peak window, charge-window-active flag, battery grid-charge recommendation ---
   - binary_sensor:
@@ -108,7 +131,7 @@ template:
           arbitrage_margin: "{{ states('sensor.battery_arbitrage_margin') | float(0) }}"
           window_active: "{{ is_state('binary_sensor.battery_charge_window_active', 'on') }}"
           self_use_triggered: >
-            {{ states('sensor.electricity_import_price') | float(999) < (states('input_number.battery_charge_price_threshold') | float(0.14))
+            {{ states('sensor.electricity_import_price_live') | float(999) < (states('input_number.battery_charge_price_threshold') | float(0.14))
                and [states('sensor.solcast_pv_forecast_forecast_tomorrow') | float(999),
                     states('sensor.helios_forecast_energy_day_1') | float(999),
                     states('sensor.energy_production_tomorrow') | float(999)] | min
@@ -120,7 +143,7 @@ template:
           {% set price_threshold = states('input_number.battery_charge_price_threshold') | float(0.14) %}
           {% set solar_threshold_kwh = states('input_number.battery_charge_solar_threshold') | float(20) %}
           {% set arbitrage_buffer = states('input_number.battery_arbitrage_min_margin') | float(0.02) %}
-          {% set price = states('sensor.electricity_import_price') | float(999) %}
+          {% set price = states('sensor.electricity_import_price_live') | float(999) %}
           {% set solcast = states('sensor.solcast_pv_forecast_forecast_tomorrow') | float(999) %}
           {% set helios = states('sensor.helios_forecast_energy_day_1') | float(999) %}
           {% set fsolar = states('sensor.energy_production_tomorrow') | float(999) %}
@@ -192,6 +215,43 @@ template:
           {% set spot = states('sensor.electricity_spot_price') | float %}
           {% set credit = peak_credit if is_state('binary_sensor.vector_peak_period', 'on') else 0 %}
           {{ ((spot + credit) * gst) | round(4) }}
+
+      # `electricity_import_price` above (settled) is one trading period behind
+      # real time - correct for cost accounting (matches the bill), wrong for a
+      # live on/off decision. These two mirror it but source from the live
+      # price sensor, which tracks the current period instead of the last
+      # completed one - used for the battery charge/arbitrage decision, not
+      # for costing.
+      - name: "Electricity spot price (live)"
+        unique_id: electricity_spot_price_live
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:cash-clock
+        availability: "{{ is_number(states('sensor.ros0221_c_kwh_live_price')) }}"
+        state: >
+          {% set src = 'sensor.ros0221_c_kwh_live_price' %}
+          {% set v = states(src) | float(0) %}
+          {% set u = (state_attr(src, 'unit_of_measurement') or '') | lower %}
+          {% if 'mwh' in u %}{{ (v / 1000) | round(5) }}
+          {% elif u.startswith('c') %}{{ (v / 100) | round(5) }}
+          {% else %}{{ v | round(5) }}{% endif %}
+
+      - name: "Electricity import price (live)"
+        unique_id: electricity_import_price_live
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-import
+        availability: "{{ is_number(states('sensor.electricity_spot_price_live')) }}"
+        state: >
+          {% set gst = 1.15 %}
+          {% set loss = 0.0476 %}
+          {% set peak_rate = 0.1504 %}
+          {% set offpeak_rate = 0.0457 %}
+          {% set transmission = 0.0302 %}
+          {% set levy = 0.002 %}
+          {% set spot = states('sensor.electricity_spot_price_live') | float %}
+          {% set network = peak_rate if is_state('binary_sensor.vector_peak_period', 'on') else offpeak_rate %}
+          {{ ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
 
       - name: "Electricity fixed daily charge"
         unique_id: electricity_fixed_daily_charge
@@ -280,10 +340,10 @@ template:
         icon: mdi:swap-horizontal
         availability: >
           {{ is_number(states('sensor.forecast_peak_export_price'))
-             and is_number(states('sensor.electricity_import_price')) }}
+             and is_number(states('sensor.electricity_import_price_live')) }}
         state: >
           {% set export_price = states('sensor.forecast_peak_export_price') | float(0) %}
-          {% set charge_price = states('sensor.electricity_import_price') | float(999) %}
+          {% set charge_price = states('sensor.electricity_import_price_live') | float(999) %}
           {% set eff = states('input_number.battery_round_trip_efficiency') | float(90) / 100 %}
           {{ ((export_price * eff) - charge_price) | round(4) }}
 
@@ -568,6 +628,16 @@ automation:
                 entity_id: binary_sensor.battery_grid_charge_recommended
                 state: "on"
             sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.al2002118050331_bathighcap
+                data:
+                  value: >-
+                    {% if state_attr('binary_sensor.battery_grid_charge_recommended', 'arbitrage_triggered') %}
+                      {{ states('input_number.battery_normal_charge_cap') | float(100) }}
+                    {% else %}
+                      {{ states('input_number.battery_overnight_charge_cap') | float(80) }}
+                    {% endif %}
               - action: switch.turn_on
                 target:
                   entity_id: switch.al2002118050331_grid_charge_enabled
@@ -575,7 +645,7 @@ automation:
                 data:
                   title: Battery Charging Started
                   message: >-
-                    Live price: ${{ states('sensor.electricity_import_price') }}/kWh
+                    Live price: ${{ states('sensor.electricity_import_price_live') }}/kWh
                     - Solar forecast: {{ state_attr('binary_sensor.battery_grid_charge_recommended', 'solar_forecast_used_kwh') }} kWh
                     - Arbitrage margin: ${{ state_attr('binary_sensor.battery_grid_charge_recommended', 'arbitrage_margin') }}/kWh
                     - Charging enabled
@@ -588,8 +658,29 @@ automation:
               - action: switch.turn_off
                 target:
                   entity_id: switch.al2002118050331_grid_charge_enabled
+              - action: number.set_value
+                target:
+                  entity_id: number.al2002118050331_bathighcap
+                data:
+                  value: "{{ states('input_number.battery_normal_charge_cap') | float(100) }}"
               - action: notify.dan_signal
                 data:
                   title: Battery Charging Stopped
                   message: "Recommendation ended - charging disabled"
                 enabled: false
+
+  - alias: "Battery charge cap - daily backstop restore"
+    id: battery_charge_cap_daily_backstop
+    description: >-
+      Force-restores the normal charge cap every morning regardless of
+      automation/switch state, in case the follow-recommendation automation
+      failed mid-window (crash, network blip) after lowering the cap.
+    triggers:
+      - trigger: time
+        at: "08:00:00"
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: number.al2002118050331_bathighcap
+        data:
+          value: "{{ states('input_number.battery_normal_charge_cap') | float(100) }}"

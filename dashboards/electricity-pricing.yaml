@@ -1,0 +1,299 @@
+views:
+  - title: Overview
+    type: sections
+    max_columns: 4
+    path: electricityinfo
+    sections:
+      - type: grid
+        cards:
+          - type: custom:apexcharts-card
+            section_mode: true
+            grid_options:
+              columns: 32
+              rows: 8
+            header:
+              show: true
+              title: ROS0221 Electricity Price (c/kWh)
+              show_states: true
+              colorize_states: true
+            graph_span: 48h
+            span:
+              start: hour
+              offset: -24h
+            now:
+              show: true
+              label: now
+              color: red
+            series:
+              - entity: sensor.ros0221_c_kwh_settled_price
+                name: Interim
+                type: column
+                show:
+                  in_header: false
+                  legend_value: false
+                stroke_width: 2
+                opacity: 0.9
+                data_generator: |
+                  return (entity.attributes.history || []).map(h => [
+                    new Date(h.period_start).getTime(),
+                    Number(h.price)
+                  ]);
+              - entity: sensor.ros0221_c_kwh_day_ahead_forecast
+                name: History
+                type: column
+                show:
+                  in_header: false
+                  legend_value: false
+                stroke_width: 2
+                opacity: 0.5
+                data_generator: |
+                  return (entity.attributes.history || []).map(h => [
+                    new Date(h.period_start).getTime(),
+                    Number(h.price)
+                  ]);
+              - entity: sensor.ros0221_c_kwh_day_ahead_forecast
+                name: Forecast
+                type: column
+                show:
+                  in_header: false
+                  legend_value: false
+                data_generator: |
+                  return (entity.attributes.forecast || []).map(f => [
+                    new Date(f.period_start).getTime(),
+                    Number(f.price)
+                  ]);
+              - entity: sensor.ros0221_c_kwh_day_ahead_forecast
+                name: Current
+                unit: ' c/kWh'
+                float_precision: 3
+                show:
+                  in_chart: false
+                  in_header: true
+            yaxis:
+              - min: 0
+                decimals: 3
+          - type: tile
+            entity: sensor.aby0111_c_kwh_live_price
+            vertical: false
+            features:
+              - type: trend-graph
+            features_position: bottom
+          - type: tile
+            entity: sensor.ros0221_c_kwh_settled_price
+            vertical: false
+            features:
+              - type: trend-graph
+            features_position: bottom
+          - type: tile
+            entity: sensor.em6_spot_power_price_nzc
+            features:
+              - type: trend-graph
+          - type: history-graph
+            entities:
+              - entity: sensor.ros0221_c_kwh_settled_price
+              - entity: sensor.ota2201_c_kwh_settled_price
+            hours_to_show: 24
+          - type: history-graph
+            entities:
+              - entity: sensor.ota2201_c_kwh_day_ahead_forecast
+              - entity: sensor.ros0221_c_kwh_day_ahead_forecast
+            hours_to_show: 24
+        column_span: 2
+    cards: []
+    dense_section_placement: false
+    icon: mdi:binoculars
+  - title: Pricing
+    path: electricity-pricing
+    icon: mdi:transmission-tower
+    type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Live pricing
+            heading_style: title
+            badges:
+              - type: entity
+                entity: binary_sensor.vector_peak_period
+                name: Peak now
+          - type: tile
+            entity: sensor.electricity_import_price
+            name: Import price
+          - type: tile
+            entity: sensor.electricity_export_price
+            name: Export price
+          - type: entities
+            title: Price breakdown
+            entities:
+              - entity: sensor.ros0221_c_kwh_settled_price
+                name: Wholesale (settled, c/kWh)
+              - entity: sensor.electricity_spot_price
+                name: Wholesale (NZD/kWh)
+              - entity: sensor.electricity_import_price
+                name: Import price
+              - entity: sensor.electricity_export_price
+                name: Export price
+              - entity: sensor.electricity_fixed_daily_charge
+                name: Fixed daily charge
+          - type: history-graph
+            title: Import / export price today
+            hours_to_show: 24
+            entities:
+              - sensor.electricity_import_price
+              - sensor.electricity_export_price
+      - type: grid
+        cards:
+          - type: heading
+            heading: Today
+            heading_style: title
+          - type: tile
+            entity: sensor.grid_import_daily
+            name: Import kWh
+          - type: tile
+            entity: sensor.grid_export_daily
+            name: Export kWh
+          - type: tile
+            entity: sensor.grid_import_cost_daily
+            name: Cost today
+          - type: tile
+            entity: sensor.grid_export_earnings_daily
+            name: Earnings today
+      - type: grid
+        cards:
+          - type: heading
+            heading: Current billing cycle
+            heading_style: title
+          - type: tile
+            entity: sensor.grid_import_billing_peak
+            name: Import — peak
+          - type: tile
+            entity: sensor.grid_import_billing_offpeak
+            name: Import — off-peak
+          - type: tile
+            entity: sensor.grid_export_billing_peak
+            name: Export — peak
+          - type: tile
+            entity: sensor.grid_export_billing_offpeak
+            name: Export — off-peak
+          - type: entities
+            title: Billing cycle cost
+            entities:
+              - entity: sensor.grid_import_cost_billing
+                name: Import cost
+              - entity: sensor.grid_export_earnings_billing
+                name: Export earnings
+              - entity: select.grid_import_billing
+                name: Import tariff (current)
+              - entity: select.grid_export_billing
+                name: Export tariff (current)
+          - type: history-graph
+            title: Cumulative cost / earnings this cycle
+            hours_to_show: 720
+            entities:
+              - sensor.electricity_import_cost_total
+              - sensor.electricity_export_earnings_total
+  - title: Pricing v2
+    path: electricity-pricing-v2
+    icon: mdi:home-battery
+    type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Battery grid-charge advisory
+            heading_style: title
+            badges:
+              - type: entity
+                entity: binary_sensor.battery_grid_charge_recommended
+                name: Recommended
+              - type: entity
+                show_state: true
+                show_icon: true
+                entity: binary_sensor.battery_charge_window_active
+          - type: tile
+            entity: sensor.battery_energy_needed
+            name: Battery needs
+          - type: tile
+            entity: sensor.overnight_charge_window_price
+            name: Forecast overnight price
+            vertical: false
+            features_position: bottom
+          - type: tile
+            entity: sensor.al2002118050331_instantaneous_battery_soc
+            name: Battery SOC
+          - type: tile
+            entity: switch.al2002118050331_grid_charge_enabled
+            name: Grid charge switch
+          - type: tile
+            entity: input_number.battery_charge_price_threshold
+            name: 'Price threshold '
+            vertical: false
+            features:
+              - type: numeric-input
+                style: buttons
+            features_position: bottom
+          - type: tile
+            entity: input_number.battery_charge_solar_threshold
+            name: Solar threshold
+            vertical: false
+            features:
+              - type: numeric-input
+                style: buttons
+            features_position: bottom
+          - type: entities
+            title: Solar forecasts for tomorrow
+            entities:
+              - entity: sensor.solcast_pv_forecast_forecast_tomorrow
+                name: Solcast
+              - entity: sensor.helios_forecast_energy_day_1
+                name: Helios
+              - entity: sensor.energy_production_tomorrow
+                name: Forecast.Solar
+              - type: attribute
+                entity: binary_sensor.battery_grid_charge_recommended
+                attribute: solar_forecast_used_kwh
+                name: Used (minimum)
+      - type: grid
+        cards:
+          - type: heading
+            heading: Solar forecast accuracy
+            heading_style: title
+          - type: history-graph
+            title: Forecast vs actual production (14 days)
+            hours_to_show: 336
+            entities:
+              - input_number.solcast_forecast_snapshot
+              - input_number.helios_forecast_snapshot
+              - input_number.forecast_solar_snapshot
+              - sensor.al2002118050331_daily_pv_generation
+          - type: history-graph
+            title: Daily accuracy %
+            hours_to_show: 720
+            entities:
+              - sensor.solcast_forecast_accuracy
+              - sensor.helios_forecast_accuracy
+              - sensor.forecast_solar_accuracy
+      - type: grid
+        cards:
+          - type: heading
+            heading: Price forcast
+            heading_style: title
+          - type: entities
+            title: Price forecast accuracy
+            entities:
+              - entity: sensor.overnight_price_forecast_accuracy
+                name: Overnight window error
+              - entity: sensor.peak_export_price_forecast_accuracy
+                name: Peak export window error
+              - entity: sensor.actual_overnight_window_price
+                name: Actual overnight price
+              - entity: sensor.actual_peak_export_window_price
+                name: Actual peak export price
+          - type: history-graph
+            title: Overnight price — forecast vs actual (14 days)
+            hours_to_show: 336
+            entities:
+              - input_number.overnight_price_forecast_snapshot
+              - sensor.actual_overnight_window_price
+    max_columns: 4
+    cards: []

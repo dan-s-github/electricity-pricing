@@ -666,7 +666,20 @@ automation:
         entity_id: binary_sensor.battery_grid_charge_recommended
       - trigger: homeassistant
         event: start
+        id: start
     actions:
+      # At startup the recommendation can still be unknown and the Alpha ESS
+      # (cloud) switch unavailable - neither branch would match, or turn_off
+      # would hit an entity that isn't loaded yet. Wait for both to settle.
+      - if:
+          - condition: trigger
+            id: start
+        then:
+          - wait_template: >-
+              {{ states('binary_sensor.battery_grid_charge_recommended') in ['on', 'off']
+                 and states('switch.al2002118050331_grid_charge_enabled') in ['on', 'off'] }}
+            timeout: "00:10:00"
+            continue_on_timeout: false
       - choose:
           - conditions:
               - condition: state

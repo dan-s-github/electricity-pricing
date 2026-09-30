@@ -198,6 +198,13 @@ design choices)
    self-use, normal cap for arbitrage), the follow automation runs in
    `queued` mode, and the 08:00 backstop also turns the switch off when
    the charge window isn't active.
+5. **Grid charge switch left on after a restart.** (2026-09-30) The
+   `homeassistant: start` run could fire before the recommendation sensor
+   had rendered (`unknown`, so neither branch matched) or before the
+   Alpha ESS cloud switch had loaded (`unavailable`, so `turn_off`
+   failed), leaving the switch in whatever state the inverter held.
+   **Fixed**: the start-triggered run now waits (up to 10 min) for both
+   entities to report `on`/`off` before syncing.
 
 ### Legacy automations, now retired
 

@@ -87,14 +87,15 @@ input_number:
 
   # Charge caps: self-use nights target a lower cap so a wrong solar forecast
   # doesn't crowd out tomorrow's free solar. Arbitrage nights, and the daily
-  # backstop, keep the normal (full) cap. `initial` matters here since the
-  # `min` (50) would otherwise be the default on first creation.
+  # backstop, keep the normal (full) cap. No `initial` on either cap so the
+  # values set in the UI survive restarts (`initial` resets them on every
+  # start). Both default to `min` (50) on first creation - set the normal cap
+  # to 100 once after adding this package.
   battery_overnight_charge_cap:
     name: Battery overnight (self-use) charge cap
     min: 50
     max: 100
     step: 1
-    initial: 80
     unit_of_measurement: "%"
     mode: box
     icon: mdi:battery-charging-70
@@ -103,7 +104,6 @@ input_number:
     min: 50
     max: 100
     step: 1
-    initial: 100
     unit_of_measurement: "%"
     mode: box
     icon: mdi:battery-charging-100
@@ -114,7 +114,9 @@ template:
       - name: "Vector peak period"
         unique_id: vector_peak_period
         state: >
-          {% set m = now().month %}{% set h = now().hour %}
+          {% set m = now().month %}
+          {% set h = now().hour %}
+
           {{ (m in [5, 9] and 17 <= h < 22) or (m in [6, 7, 8] and (7 <= h < 11 or 17 <= h < 22)) }}
 
       - name: "Battery grid charge recommended"
@@ -143,17 +145,29 @@ template:
           {% set price_threshold = states('input_number.battery_charge_price_threshold') | float(0.14) %}
           {% set solar_threshold_kwh = states('input_number.battery_charge_solar_threshold') | float(20) %}
           {% set arbitrage_buffer = states('input_number.battery_arbitrage_min_margin') | float(0.02) %}
+
           {% set price = states('sensor.electricity_import_price_live') | float(999) %}
           {% set solcast = states('sensor.solcast_pv_forecast_forecast_tomorrow') | float(999) %}
           {% set helios = states('sensor.helios_forecast_energy_day_1') | float(999) %}
           {% set fsolar = states('sensor.energy_production_tomorrow') | float(999) %}
           {% set solar_tomorrow = [solcast, helios, fsolar] | min %}
-          {% set need = states('sensor.battery_energy_needed') | float(0) %}
           {% set margin = states('sensor.battery_arbitrage_margin') | float(-999) %}
           {% set window_active = is_state('binary_sensor.battery_charge_window_active', 'on') %}
-          {% set self_use_case = price < price_threshold and solar_tomorrow < solar_threshold_kwh %}
-          {% set arbitrage_case = margin > arbitrage_buffer %}
-          {{ window_active and (self_use_case or arbitrage_case) and need > 0.5 }}
+
+          {# Need is measured against each case's target cap, not the live bathighcap:
+             the follow automation lowers bathighcap when charging starts, which would
+             otherwise zero the need and flip this sensor straight back off. #}
+          {% set capacity = states('sensor.al2002118050331_installed_capacity') | float(0) %}
+          {% set soc = states('sensor.al2002118050331_instantaneous_battery_soc') | float(0) %}
+          {% set overnight_cap = states('input_number.battery_overnight_charge_cap') | float(50) %}
+          {% set normal_cap = states('input_number.battery_normal_charge_cap') | float(100) %}
+          {% set self_use_need = capacity * (overnight_cap - soc) / 100 %}
+          {% set arbitrage_need = capacity * (normal_cap - soc) / 100 %}
+
+          {% set self_use_case = price < price_threshold and solar_tomorrow < solar_threshold_kwh and self_use_need > 0.5 %}
+          {% set arbitrage_case = margin > arbitrage_buffer and arbitrage_need > 0.5 %}
+
+          {{ window_active and (self_use_case or arbitrage_case) }}
 
   # --- Combined grid import meter (everything crossing the meter, as billed) ---
   - sensor:
@@ -182,9 +196,14 @@ template:
           {% set src = 'sensor.ros0221_c_kwh_settled_price' %}
           {% set v = states(src) | float(0) %}
           {% set u = (state_attr(src, 'unit_of_measurement') or '') | lower %}
-          {% if 'mwh' in u %}{{ (v / 1000) | round(5) }}
-          {% elif u.startswith('c') %}{{ (v / 100) | round(5) }}
-          {% else %}{{ v | round(5) }}{% endif %}
+
+          {% if 'mwh' in u %}
+            {{ (v / 1000) | round(5) }}
+          {% elif u.startswith('c') %}
+            {{ (v / 100) | round(5) }}
+          {% else %}
+            {{ v | round(5) }}
+          {% endif %}
 
       - name: "Electricity import price"
         unique_id: electricity_import_price
@@ -201,6 +220,7 @@ template:
           {% set levy = 0.002 %}
           {% set spot = states('sensor.electricity_spot_price') | float %}
           {% set network = peak_rate if is_state('binary_sensor.vector_peak_period', 'on') else offpeak_rate %}
+
           {{ ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
 
       - name: "Electricity export price"
@@ -214,6 +234,7 @@ template:
           {% set peak_credit = 0.0524 %}
           {% set spot = states('sensor.electricity_spot_price') | float %}
           {% set credit = peak_credit if is_state('binary_sensor.vector_peak_period', 'on') else 0 %}
+
           {{ ((spot + credit) * gst) | round(4) }}
 
       # `electricity_import_price` above (settled) is one trading period behind
@@ -232,9 +253,14 @@ template:
           {% set src = 'sensor.ros0221_c_kwh_live_price' %}
           {% set v = states(src) | float(0) %}
           {% set u = (state_attr(src, 'unit_of_measurement') or '') | lower %}
-          {% if 'mwh' in u %}{{ (v / 1000) | round(5) }}
-          {% elif u.startswith('c') %}{{ (v / 100) | round(5) }}
-          {% else %}{{ v | round(5) }}{% endif %}
+
+          {% if 'mwh' in u %}
+            {{ (v / 1000) | round(5) }}
+          {% elif u.startswith('c') %}
+            {{ (v / 100) | round(5) }}
+          {% else %}
+            {{ v | round(5) }}
+          {% endif %}
 
       - name: "Electricity import price (live)"
         unique_id: electricity_import_price_live
@@ -251,6 +277,7 @@ template:
           {% set levy = 0.002 %}
           {% set spot = states('sensor.electricity_spot_price_live') | float %}
           {% set network = peak_rate if is_state('binary_sensor.vector_peak_period', 'on') else offpeak_rate %}
+
           {{ ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
 
       - name: "Electricity fixed daily charge"
@@ -268,6 +295,7 @@ template:
           {% set capacity = states('sensor.al2002118050331_installed_capacity') | float(0) %}
           {% set high_cap = states('number.al2002118050331_bathighcap') | float(100) %}
           {% set soc = states('sensor.al2002118050331_instantaneous_battery_soc') | float(0) %}
+
           {{ [((capacity * high_cap / 100) - (capacity * soc / 100)), 0] | max | round(2) }}
 
       - name: "Forecast overnight window price"
@@ -287,6 +315,7 @@ template:
           {% set end_h = states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) %}
           {% set target_date = (now() + timedelta(days=1)).date() %}
           {% set ns = namespace(total=0, count=0) %}
+
           {% for p in periods %}
             {% set dt = as_datetime(p.period_start) %}
             {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
@@ -310,6 +339,7 @@ template:
           {% set periods = state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] %}
           {% set target_date = (now() + timedelta(days=1)).date() %}
           {% set target_month = target_date.month %}
+
           {% if target_month in [5, 9] %}
             {% set windows = [(17, 22)] %}
           {% elif target_month in [6, 7, 8] %}
@@ -345,6 +375,7 @@ template:
           {% set export_price = states('sensor.forecast_peak_export_price') | float(0) %}
           {% set charge_price = states('sensor.electricity_import_price_live') | float(999) %}
           {% set eff = states('input_number.battery_round_trip_efficiency') | float(90) / 100 %}
+
           {{ ((export_price * eff) - charge_price) | round(4) }}
 
   # --- Charge-window active flag, re-evaluated every 5 min so it flips on time at the boundary ---
@@ -359,6 +390,7 @@ template:
           {% set start_h = states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) %}
           {% set end_h = states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) %}
           {% set h = now().hour %}
+
           {% if start_h <= end_h %}
             {{ start_h <= h < end_h }}
           {% else %}
@@ -379,6 +411,7 @@ template:
           {% set old = trigger.from_state.state | float(none) %}
           {% set new = trigger.to_state.state | float(none) %}
           {% set prev = this.state | float(0) %}
+
           {% if old is none or new is none or new < old %}
             {{ prev }}
           {% else %}
@@ -398,6 +431,7 @@ template:
           {% set old = trigger.from_state.state | float(none) %}
           {% set new = trigger.to_state.state | float(none) %}
           {% set prev = this.state | float(0) %}
+
           {% if old is none or new is none or new < old %}
             {{ prev }}
           {% else %}
@@ -419,6 +453,7 @@ template:
         state: >
           {% set forecast = states('input_number.solcast_forecast_snapshot') | float(0) %}
           {% set actual = states('sensor.al2002118050331_daily_pv_generation') | float(0) %}
+
           {{ ((actual - forecast) / forecast * 100) | round(1) if forecast > 0 else 0 }}
 
       - name: "Helios forecast accuracy"
@@ -431,6 +466,7 @@ template:
         state: >
           {% set forecast = states('input_number.helios_forecast_snapshot') | float(0) %}
           {% set actual = states('sensor.al2002118050331_daily_pv_generation') | float(0) %}
+
           {{ ((actual - forecast) / forecast * 100) | round(1) if forecast > 0 else 0 }}
 
       - name: "Forecast.Solar accuracy"
@@ -443,6 +479,7 @@ template:
         state: >
           {% set forecast = states('input_number.forecast_solar_snapshot') | float(0) %}
           {% set actual = states('sensor.al2002118050331_daily_pv_generation') | float(0) %}
+
           {{ ((actual - forecast) / forecast * 100) | round(1) if forecast > 0 else 0 }}
 
       - name: "Actual overnight window price"
@@ -461,6 +498,7 @@ template:
           {% set end_h = states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) %}
           {% set target_date = now().date() %}
           {% set ns = namespace(total=0, count=0) %}
+
           {% for p in periods %}
             {% set dt = as_datetime(p.period_start) %}
             {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
@@ -483,6 +521,7 @@ template:
           {% set periods = state_attr('sensor.ros0221_c_kwh_settled_price', 'history') or [] %}
           {% set target_date = now().date() %}
           {% set target_month = target_date.month %}
+
           {% if target_month in [5, 9] %}
             {% set windows = [(17, 22)] %}
           {% elif target_month in [6, 7, 8] %}
@@ -516,6 +555,7 @@ template:
         state: >
           {% set forecast = states('input_number.overnight_price_forecast_snapshot') | float(0) %}
           {% set actual = states('sensor.actual_overnight_window_price') | float(0) %}
+
           {{ (actual - forecast) | round(4) }}
 
       - name: "Peak export price forecast accuracy"
@@ -528,6 +568,7 @@ template:
         state: >
           {% set forecast = states('input_number.peak_export_price_forecast_snapshot') | float(0) %}
           {% set actual = states('sensor.actual_peak_export_window_price') | float(0) %}
+
           {{ (actual - forecast) | round(4) }}
 
 utility_meter:
@@ -616,6 +657,10 @@ automation:
 
   - alias: "Battery grid charge - follow recommendation"
     id: battery_grid_charge_follow_recommendation
+    # Queued, not the default single: a state change that arrives while a
+    # previous run is still waiting on the inverter must not be dropped, or the
+    # switch can be left on after the recommendation turns off.
+    mode: queued
     triggers:
       - trigger: state
         entity_id: binary_sensor.battery_grid_charge_recommended
@@ -636,7 +681,7 @@ automation:
                     {% if state_attr('binary_sensor.battery_grid_charge_recommended', 'arbitrage_triggered') %}
                       {{ states('input_number.battery_normal_charge_cap') | float(100) }}
                     {% else %}
-                      {{ states('input_number.battery_overnight_charge_cap') | float(80) }}
+                      {{ states('input_number.battery_overnight_charge_cap') | float(50) }}
                     {% endif %}
               - action: switch.turn_on
                 target:
@@ -645,10 +690,7 @@ automation:
                 data:
                   title: Battery Charging Started
                   message: >-
-                    Live price: ${{ states('sensor.electricity_import_price_live') }}/kWh
-                    - Solar forecast: {{ state_attr('binary_sensor.battery_grid_charge_recommended', 'solar_forecast_used_kwh') }} kWh
-                    - Arbitrage margin: ${{ state_attr('binary_sensor.battery_grid_charge_recommended', 'arbitrage_margin') }}/kWh
-                    - Charging enabled
+                    Live price: ${{ states('sensor.electricity_import_price_live') }}/kWh - Solar forecast: {{ state_attr('binary_sensor.battery_grid_charge_recommended', 'solar_forecast_used_kwh') }} kWh - Arbitrage margin: ${{ state_attr('binary_sensor.battery_grid_charge_recommended', 'arbitrage_margin') }}/kWh - Charging enabled
                 enabled: false
           - conditions:
               - condition: state
@@ -672,14 +714,27 @@ automation:
   - alias: "Battery charge cap - daily backstop restore"
     id: battery_charge_cap_daily_backstop
     description: >-
-      Force-restores the normal charge cap every morning regardless of
-      automation/switch state, in case the follow-recommendation automation
-      failed mid-window (crash, network blip) after lowering the cap.
+      Force-restores the normal charge cap every morning, and turns grid
+      charging off if the charge window has closed, regardless of
+      automation/switch state - in case the follow-recommendation automation
+      failed mid-window (crash, network blip, dropped trigger).
     triggers:
       - trigger: time
         at: "08:00:00"
+    # Switch first, and continue_on_error on both, so a failed inverter call
+    # for one doesn't stop the other from being attempted.
     actions:
+      - if:
+          - condition: state
+            entity_id: binary_sensor.battery_charge_window_active
+            state: "off"
+        then:
+          - action: switch.turn_off
+            continue_on_error: true
+            target:
+              entity_id: switch.al2002118050331_grid_charge_enabled
       - action: number.set_value
+        continue_on_error: true
         target:
           entity_id: number.al2002118050331_bathighcap
         data:

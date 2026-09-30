@@ -118,7 +118,8 @@ margin. Point is deliberately buying cheap overnight power to resell at a
 profit during tomorrow's peak export window — independent of self-use need.
 
 Both paths are gated by `battery_charge_window_active` (see below) and
-require `battery_energy_needed > 0.5 kWh` (don't charge a full battery).
+require more than 0.5 kWh of need, measured against that case's target cap
+(overnight cap for self-use, normal cap for arbitrage).
 
 ### Why "minimum of three forecasts"
 
@@ -175,7 +176,7 @@ design choices)
    `number.al2002118050331_bathighcap` (100%), which can crowd out
    tomorrow's free solar if the forecast was simply wrong, or just isn't
    worth it if only a small top-up was needed. **Fixed** (2026-09-23): two
-   new `input_number` helpers, `battery_overnight_charge_cap` (default 80%)
+   new `input_number` helpers, `battery_overnight_charge_cap` (default 50%)
    and `battery_normal_charge_cap` (default 100%). The
    "Battery grid charge - follow recommendation" automation now writes to
    `number.al2002118050331_bathighcap` on start (using the
@@ -186,6 +187,17 @@ design choices)
    restores the normal cap at 08:00 every day regardless of state, in case
    the follow-recommendation automation fails mid-window (crash, network
    blip) after lowering the cap.
+4. **Grid charge switch left on during the day.** (2026-09-30) The
+   recommendation's `need > 0.5` check used `battery_energy_needed`, which
+   is measured against the live `bathighcap`. Lowering the cap to the
+   overnight cap on start zeroed the need (with SOC near the cap) and
+   flipped the recommendation straight back off - while the automation,
+   in default `single` mode, was still running, so the "off" trigger was
+   dropped and the switch stayed on. **Fixed**: the recommendation now
+   measures need against each case's target cap (overnight cap for
+   self-use, normal cap for arbitrage), the follow automation runs in
+   `queued` mode, and the 08:00 backstop also turns the switch off when
+   the charge window isn't active.
 
 ### Legacy automations, now retired
 

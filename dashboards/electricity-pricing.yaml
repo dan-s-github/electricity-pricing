@@ -1,8 +1,9 @@
 views:
-  - title: Overview
-    type: sections
-    max_columns: 4
+  - type: sections
+    title: Overview
     path: electricityinfo
+    icon: mdi:binoculars
+    max_columns: 2
     sections:
       - type: grid
         cards:
@@ -73,7 +74,7 @@ views:
               - min: 0
                 decimals: 3
           - type: tile
-            entity: sensor.aby0111_c_kwh_live_price
+            entity: sensor.ros0221_c_kwh_live_price
             vertical: false
             features:
               - type: trend-graph
@@ -99,13 +100,11 @@ views:
               - entity: sensor.ros0221_c_kwh_day_ahead_forecast
             hours_to_show: 24
         column_span: 2
-    cards: []
-    dense_section_placement: false
-    icon: mdi:binoculars
-  - title: Pricing
+  - type: sections
+    title: Pricing
     path: electricity-pricing
     icon: mdi:transmission-tower
-    type: sections
+    max_columns: 3
     sections:
       - type: grid
         cards:
@@ -192,10 +191,11 @@ views:
             entities:
               - sensor.electricity_import_cost_total
               - sensor.electricity_export_earnings_total
-  - title: Pricing v2
+  - type: sections
+    title: Pricing v2
     path: electricity-pricing-v2
     icon: mdi:home-battery
-    type: sections
+    max_columns: 3
     sections:
       - type: grid
         cards:
@@ -231,7 +231,7 @@ views:
             features:
               - type: numeric-input
                 style: buttons
-            features_position: bottom
+            features_position: inline
           - type: tile
             entity: input_number.battery_charge_solar_threshold
             name: Solar threshold
@@ -239,7 +239,21 @@ views:
             features:
               - type: numeric-input
                 style: buttons
-            features_position: bottom
+            features_position: inline
+          - type: tile
+            entity: input_number.battery_overnight_charge_cap
+            vertical: false
+            features:
+              - type: numeric-input
+                style: buttons
+            features_position: inline
+          - type: tile
+            entity: input_number.battery_normal_charge_cap
+            vertical: false
+            features:
+              - type: numeric-input
+                style: buttons
+            features_position: inline
           - type: entities
             title: Solar forecasts for tomorrow
             entities:
@@ -295,5 +309,172 @@ views:
             entities:
               - input_number.overnight_price_forecast_snapshot
               - sensor.actual_overnight_window_price
+  - type: sections
+    title: EMHASS
+    path: emhass
+    icon: mdi:chart-timeline-variant
     max_columns: 4
-    cards: []
+    sections:
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Planned power
+            heading_style: title
+          - type: custom:apexcharts-card
+            section_mode: true
+            grid_options:
+              columns: 24
+              rows: 7
+            graph_span: 24h
+            span:
+              start: minute
+            now:
+              show: true
+              label: now
+              color: red
+            header:
+              show: true
+              show_states: false
+            yaxis:
+              - decimals: 0
+            series:
+              - entity: sensor.p_pv_forecast
+                name: PV
+                unit: W
+                curve: stepline
+                stroke_width: 2
+                data_generator: |
+                  return (entity.attributes.forecasts || []).map(f => [
+                    new Date(f.date).getTime(),
+                    Number(f.p_pv_forecast)
+                  ]);
+              - entity: sensor.p_load_forecast
+                name: Load
+                unit: W
+                curve: stepline
+                stroke_width: 2
+                data_generator: |
+                  return (entity.attributes.forecasts || []).map(f => [
+                    new Date(f.date).getTime(),
+                    Number(f.p_load_forecast)
+                  ]);
+              - entity: sensor.p_batt_forecast
+                name: Battery (+ discharge)
+                unit: W
+                curve: stepline
+                stroke_width: 2
+                data_generator: >
+                  return (entity.attributes.battery_scheduled_power || []).map(f => [
+                    new Date(f.date).getTime(),
+                    Number(f.p_batt_forecast)
+                  ]);
+              - entity: sensor.p_grid_forecast
+                name: Grid (+ import)
+                unit: W
+                curve: stepline
+                stroke_width: 2
+                data_generator: |
+                  return (entity.attributes.forecasts || []).map(f => [
+                    new Date(f.date).getTime(),
+                    Number(f.p_grid_forecast)
+                  ]);
+      - type: grid
+        cards:
+          - type: heading
+            heading: Optimisation
+            heading_style: title
+            badges:
+              - type: entity
+                entity: automation.emhass_optimise_and_publish
+                name: Last run
+                state_content: last_triggered
+          - type: tile
+            entity: sensor.optim_status
+            name: Status
+          - type: tile
+            entity: sensor.total_cost_fun_value
+            name: Plan value
+          - type: tile
+            entity: sensor.p_batt_forecast
+            name: Battery now (+ discharge)
+          - type: tile
+            entity: sensor.soc_batt_forecast
+            name: Planned SOC
+          - type: tile
+            entity: sensor.p_grid_forecast
+            name: Grid now (+ import)
+          - type: tile
+            entity: sensor.al2002118050331_instantaneous_battery_soc
+            name: Actual SOC
+          - type: tile
+            entity: sensor.unit_load_cost
+            name: Import price
+          - type: tile
+            entity: sensor.unit_prod_price
+            name: Export price
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Planned SOC and prices
+            heading_style: title
+          - type: custom:apexcharts-card
+            section_mode: true
+            grid_options:
+              columns: 24
+              rows: 7
+            graph_span: 24h
+            span:
+              start: minute
+            now:
+              show: true
+              label: now
+              color: red
+            header:
+              show: true
+              show_states: false
+            yaxis:
+              - id: soc
+                min: 0
+                max: 100
+                decimals: 0
+              - id: price
+                opposite: true
+                min: 0
+                decimals: 2
+            series:
+              - entity: sensor.soc_batt_forecast
+                name: SOC
+                unit: '%'
+                yaxis_id: soc
+                type: area
+                opacity: 0.3
+                stroke_width: 2
+                data_generator: >
+                  return (entity.attributes.battery_scheduled_soc || []).map(f => [
+                    new Date(f.date).getTime(),
+                    Number(f.soc_batt_forecast)
+                  ]);
+              - entity: sensor.unit_load_cost
+                name: Import price
+                unit: NZD/kWh
+                yaxis_id: price
+                curve: stepline
+                stroke_width: 2
+                data_generator: >
+                  return (entity.attributes.unit_load_cost_forecasts || []).map(f => [
+                    new Date(f.date).getTime(),
+                    Number(f.unit_load_cost)
+                  ]);
+              - entity: sensor.unit_prod_price
+                name: Export price
+                unit: NZD/kWh
+                yaxis_id: price
+                curve: stepline
+                stroke_width: 2
+                data_generator: >
+                  return (entity.attributes.unit_prod_price_forecasts || []).map(f => [
+                    new Date(f.date).getTime(),
+                    Number(f.unit_prod_price)
+                  ]);

@@ -205,6 +205,29 @@ design choices)
    failed), leaving the switch in whatever state the inverter held.
    **Fixed**: the start-triggered run now waits (up to 10 min) for both
    entities to report `on`/`off` before syncing.
+6. **Charged to 100% on a self-use night, switch still on all day.**
+   (2026-10-01) Three things, confirmed from recorder history and the
+   Alpha ESS integration source (v0.8.5):
+   - *Write order.* The integration sends the whole charge config
+     (`updateChargeConfigInfo`: cap + grid-charge flag + times) on every
+     write, filling the field it isn't changing from its last poll. A cap
+     write refreshes that poll afterwards; a switch write doesn't. The
+     "off" branch did switch-off then cap-restore, so the cap write
+     re-sent the stale `gridCharge=1` and turned grid charging back on,
+     now at the normal (100%) cap. History showed every switch-off
+     reverting to on 5-15 s later, including the 08:00 backstop's.
+     **Fixed**: cap first, switch last, in both branches and the backstop.
+   - *No hysteresis on need.* Start and stop both used `need > 0.5 kWh`
+     (4.4% of 11.4 kWh), so charging started at 45.6% SOC and the
+     recommendation turned off 87 s later at 46.0% - which ran the broken
+     "off" branch above. **Fixed**: 0.5 kWh to start, but once on it stays
+     on until the target cap is reached (`this.state`).
+   - *Trigger fired on attribute changes.* The state trigger had no
+     `to:`, so every price/forecast attribute update re-ran the
+     automation (~370 off/on write pairs in 34 h). **Fixed**: `to: ~`.
+
+   This also means fix 4 never worked as intended: its "switch first"
+   backstop order was itself the failing order.
 
 ### Legacy automations, now retired
 

@@ -164,8 +164,13 @@ template:
           {% set self_use_need = capacity * (overnight_cap - soc) / 100 %}
           {% set arbitrage_need = capacity * (normal_cap - soc) / 100 %}
 
-          {% set self_use_case = price < price_threshold and solar_tomorrow < solar_threshold_kwh and self_use_need > 0.5 %}
-          {% set arbitrage_case = margin > arbitrage_buffer and arbitrage_need > 0.5 %}
+          {# Hysteresis: 0.5 kWh of need to start, but once charging keep going until
+             the target cap is reached. With one threshold the first SOC tick after
+             charging starts drops the need back under 0.5 and stops it again. #}
+          {% set min_need = 0 if this is defined and this.state == 'on' else 0.5 %}
+
+          {% set self_use_case = price < price_threshold and solar_tomorrow < solar_threshold_kwh and self_use_need > min_need %}
+          {% set arbitrage_case = margin > arbitrage_buffer and arbitrage_need > min_need %}
 
           {{ window_active and (self_use_case or arbitrage_case) }}
 
@@ -662,8 +667,12 @@ automation:
     # switch can be left on after the recommendation turns off.
     mode: queued
     triggers:
+      # `to: ~` = real state changes only. Without it the trigger also fires on
+      # every attribute change (price, forecasts - every few minutes all day),
+      # re-sending the inverter config each time.
       - trigger: state
         entity_id: binary_sensor.battery_grid_charge_recommended
+        to: ~
       - trigger: homeassistant
         event: start
         id: start
@@ -680,6 +689,12 @@ automation:
                  and states('switch.al2002118050331_grid_charge_enabled') in ['on', 'off'] }}
             timeout: "00:10:00"
             continue_on_timeout: false
+      # Write order matters: cap first, switch last, in both branches. The
+      # Alpha ESS integration sends the whole charge config on every write,
+      # filling the field it isn't changing from its last poll. A cap write
+      # refreshes that poll afterwards, a switch write doesn't - so a cap write
+      # straight after a switch write re-sends the old switch state and undoes
+      # it.
       - choose:
           - conditions:
               - condition: state
@@ -710,14 +725,17 @@ automation:
                 entity_id: binary_sensor.battery_grid_charge_recommended
                 state: "off"
             sequence:
-              - action: switch.turn_off
-                target:
-                  entity_id: switch.al2002118050331_grid_charge_enabled
+              # continue_on_error so a failed cap restore can't stop the
+              # switch from being turned off.
               - action: number.set_value
+                continue_on_error: true
                 target:
                   entity_id: number.al2002118050331_bathighcap
                 data:
                   value: "{{ states('input_number.battery_normal_charge_cap') | float(100) }}"
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.al2002118050331_grid_charge_enabled
               - action: notify.dan_signal
                 data:
                   title: Battery Charging Stopped
@@ -734,9 +752,16 @@ automation:
     triggers:
       - trigger: time
         at: "08:00:00"
-    # Switch first, and continue_on_error on both, so a failed inverter call
+    # Cap first, switch last (see the write-order note on the follow
+    # automation), and continue_on_error on both, so a failed inverter call
     # for one doesn't stop the other from being attempted.
     actions:
+      - action: number.set_value
+        continue_on_error: true
+        target:
+          entity_id: number.al2002118050331_bathighcap
+        data:
+          value: "{{ states('input_number.battery_normal_charge_cap') | float(100) }}"
       - if:
           - condition: state
             entity_id: binary_sensor.battery_charge_window_active
@@ -746,9 +771,3 @@ automation:
             continue_on_error: true
             target:
               entity_id: switch.al2002118050331_grid_charge_enabled
-      - action: number.set_value
-        continue_on_error: true
-        target:
-          entity_id: number.al2002118050331_bathighcap
-        data:
-          value: "{{ states('input_number.battery_normal_charge_cap') | float(100) }}"

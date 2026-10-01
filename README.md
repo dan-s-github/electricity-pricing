@@ -1,4 +1,4 @@
-# electricity-pricing
+# Electricity Pricing
 
 Home Assistant configuration that turns a New Zealand wholesale electricity
 bill (Vector network, spot-price energy, node ROS0221) into live sensors, and

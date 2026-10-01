@@ -105,6 +105,22 @@ template:
         availability: "{{ is_number(states('sensor.unit_prod_price')) }}"
         state: "{{ states('sensor.unit_prod_price') }}"
 
+  # EMHASS publishes no on/off signal, so derive one from the plan for the
+  # current period: battery charging (negative) while the grid is importing.
+  # Battery-negative alone would also be on when charging from solar. The
+  # 50 W deadband keeps solver noise around zero from flipping it. Advisory
+  # only - nothing acts on this yet.
+  - binary_sensor:
+      - name: "EMHASS grid charge planned"
+        unique_id: emhass_grid_charge_planned
+        icon: mdi:battery-charging
+        availability: >
+          {{ is_number(states('sensor.p_batt_forecast'))
+             and is_number(states('sensor.p_grid_forecast')) }}
+        state: >
+          {{ states('sensor.p_batt_forecast') | float < -50
+             and states('sensor.p_grid_forecast') | float > 50 }}
+
 automation:
   - alias: "EMHASS - optimise and publish"
     id: emhass_optimise_and_publish

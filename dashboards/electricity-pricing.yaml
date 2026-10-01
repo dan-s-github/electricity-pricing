@@ -206,10 +206,12 @@ views:
               - type: entity
                 entity: binary_sensor.battery_grid_charge_recommended
                 name: Recommended
+                tap_action:
+                  action: more-info
               - type: entity
-                show_state: true
-                show_icon: true
                 entity: binary_sensor.battery_charge_window_active
+                tap_action:
+                  action: more-info
           - type: tile
             entity: sensor.battery_energy_needed
             name: Battery needs
@@ -385,6 +387,11 @@ views:
             heading: Optimisation
             heading_style: title
             badges:
+              - type: entity
+                entity: binary_sensor.emhass_grid_charge_planned
+                name: Grid charge
+                tap_action:
+                  action: more-info
               - type: entity
                 entity: automation.emhass_optimise_and_publish
                 name: Last run

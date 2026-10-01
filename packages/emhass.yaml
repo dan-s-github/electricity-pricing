@@ -1,0 +1,104 @@
+# EMHASS (add-on 5b918bf2_emhass) - battery schedule optimised against landed
+# wholesale prices. Advisory only: publishes the plan as sensors, does not
+# control the inverter. Add-on config lives in emhass/config.json.
+#
+# EMHASS's static config can't express a half-hourly wholesale price, so every
+# run passes its forecasts in the request instead:
+#   load_cost_forecast  - landed import price per trading period (day-ahead
+#                         forecast + the same network/levy/GST build-up as
+#                         electricity_import_price in electricity_pricing.yaml)
+#   prod_price_forecast - export price per trading period (spot + peak credit)
+#   pv_power_forecast   - Helios forecast curve, W
+# All three are {timestamp: value} maps, which EMHASS aligns onto its own
+# 30-min grid, so list lengths never have to match exactly.
+
+rest_command:
+  emhass_naive_mpc_optim:
+    url: http://5b918bf2-emhass:5000/action/naive-mpc-optim
+    method: post
+    timeout: 120
+    content_type: application/json
+    payload: >-
+      {%- set gst = 1.15 -%}
+      {%- set loss = 0.0476 -%}
+      {%- set peak_rate = 0.1504 -%}
+      {%- set offpeak_rate = 0.0457 -%}
+      {%- set transmission = 0.0302 -%}
+      {%- set levy = 0.002 -%}
+      {%- set peak_credit = 0.0524 -%}
+      {%- set ns = namespace(cost=[], prod=[], pv=[]) -%}
+
+      {#- Current trading period: live price, already landed -#}
+      {%- set period_now = now().replace(minute=(now().minute // 30) * 30, second=0, microsecond=0).isoformat() -%}
+      {%- set peak_now = is_state('binary_sensor.vector_peak_period', 'on') -%}
+      {%- if is_number(states('sensor.electricity_import_price_live')) -%}
+        {%- set ns.cost = ns.cost + [(period_now, states('sensor.electricity_import_price_live') | float)] -%}
+      {%- endif -%}
+      {%- if is_number(states('sensor.electricity_spot_price_live')) -%}
+        {%- set spot_now = states('sensor.electricity_spot_price_live') | float -%}
+        {%- set ns.prod = ns.prod + [(period_now, ((spot_now + (peak_credit if peak_now else 0)) * gst) | round(4))] -%}
+      {%- endif -%}
+
+      {#- Future trading periods: day-ahead forecast (c/kWh) -#}
+      {%- for p in state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] -%}
+        {%- set dt = as_datetime(p.period_start) | as_local -%}
+        {%- set peak = (dt.month in [5, 9] and 17 <= dt.hour < 22)
+                       or (dt.month in [6, 7, 8] and (7 <= dt.hour < 11 or 17 <= dt.hour < 22)) -%}
+        {%- set spot = p.price / 100 -%}
+        {%- set network = peak_rate if peak else offpeak_rate -%}
+        {%- set ns.cost = ns.cost + [(p.period_start, ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4))] -%}
+        {%- set ns.prod = ns.prod + [(p.period_start, ((spot + (peak_credit if peak else 0)) * gst) | round(4))] -%}
+      {%- endfor -%}
+
+      {#- Helios: watts per bucket; EMHASS averages sub-30-min buckets itself.
+          Helios rather than Solcast because Solcast over-forecast every day of
+          the first 8 days tracked (see design-notes.md) -#}
+      {%- for p in state_attr('sensor.helios_forecast_power_now', 'forecast') or [] -%}
+        {%- set ns.pv = ns.pv + [(p.datetime, p.watts | round(0))] -%}
+      {%- endfor -%}
+
+      {#- soc_final = battery_minimum_state_of_charge in emhass/config.json:
+          the horizon rolls forward every run, so the end state is never reached -#}
+      {{ {
+        "prediction_horizon": [ns.cost | length, 48] | min,
+        "soc_init": states('sensor.al2002118050331_instantaneous_battery_soc') | float(50) / 100,
+        "soc_final": 0.12,
+        "load_cost_forecast": dict(ns.cost),
+        "prod_price_forecast": dict(ns.prod),
+        "pv_power_forecast": dict(ns.pv)
+      } | tojson }}
+
+  emhass_publish_data:
+    url: http://5b918bf2-emhass:5000/action/publish-data
+    method: post
+    timeout: 60
+    content_type: application/json
+    payload: "{}"
+
+automation:
+  - alias: "EMHASS - optimise and publish"
+    id: emhass_optimise_and_publish
+    mode: single
+    triggers:
+      # One minute past each trading-period boundary, so the live price and
+      # the forecast list have both rolled over to the new period.
+      - trigger: time_pattern
+        minutes: 1
+      - trigger: time_pattern
+        minutes: 31
+    conditions:
+      # MPC needs a usable price horizon and a PV forecast; skip the run rather
+      # than optimise against the static fallback prices and default panel
+      # model in config.json.
+      - condition: template
+        value_template: >-
+          {{ (state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or []) | length >= 5
+             and (state_attr('sensor.helios_forecast_power_now', 'forecast') or []) | length > 0 }}
+    actions:
+      - action: rest_command.emhass_naive_mpc_optim
+        response_variable: optim
+      - if:
+          - condition: template
+            value_template: "{{ optim.status in [200, 201] }}"
+        then:
+          - action: rest_command.emhass_publish_data

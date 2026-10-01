@@ -242,6 +242,39 @@ forecast, no window gating) and used separate on/off thresholds via
 `input_number` helpers are still present but unused — safe to delete once
 confident in the new system, kept for now as a comparison reference.
 
+## EMHASS (advisory, runs alongside the above)
+
+`emhass/config.json` + `packages/emhass.yaml` set up the EMHASS add-on to
+optimise the battery schedule against the same landed prices. It only
+publishes a plan (`sensor.p_batt_forecast`, `sensor.soc_batt_forecast`,
+`sensor.p_grid_forecast`, `sensor.total_cost_fun_value`, ...); nothing acts
+on it yet, the grid-charge advisory above still controls the inverter.
+
+- **Prices and PV are passed per run, not configured.** EMHASS's static
+  config only knows peak/off-peak tariffs, so the `naive-mpc-optim` call
+  carries the half-hourly landed import price, export price and Helios PV
+  forecast (the `forecast` attribute of `sensor.helios_forecast_power_now`).
+  The price constants in `config.json` are a fallback only.
+- **Helios, not Solcast, for PV.** Over the first 8 tracked days
+  (2026-09-23 to 09-30) the mean absolute daily error was Helios 7.0 kWh,
+  Forecast.Solar 12.5 kWh, Solcast 17.5 kWh. Solcast over-forecast every
+  day (actual was 36-73% of forecast) and Forecast.Solar under-forecast
+  every day, which looks like site setup rather than weather. Helios still
+  missed by 12-15 kWh on three of the eight days. Small sample - revisit.
+- **Rate constants are duplicated** in the `rest_command` payload - update
+  them there too when Vector's rates change.
+- **Plant values are measured, not from a datasheet:** 11.4 kWh installed,
+  ±4.8 kW battery (largest seen in a week of history), 5 kW hybrid
+  inverter, 12% minimum SOC (the inverter's current discharge floor).
+  Battery power needs no sign flip (Alpha ESS reports discharge positive).
+- **No battery export** (`set_nodischarge_to_grid: true`), matching how the
+  system runs today.
+- **PV module/tilt/azimuth in `config.json` are still EMHASS defaults.**
+  They only matter if a run is made without the Helios forecast, which the
+  automation's condition prevents.
+- Deploy `config.json` to `/addon_configs/5b918bf2_emhass/config.json` and
+  restart the add-on; the package goes next to `electricity_pricing.yaml`.
+
 ## Forecast accuracy tracking
 
 Two independent accuracy systems, same pattern: snapshot tonight's

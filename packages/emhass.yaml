@@ -75,6 +75,36 @@ rest_command:
     content_type: application/json
     payload: "{}"
 
+template:
+  # EMHASS turns HA's currency code into a symbol from a hardcoded table with
+  # no NZD entry, so its monetary sensors publish with the unit "Unknown"
+  # (and it overwrites any unit passed to publish-data). These mirror the
+  # state with the right unit for display; the forecast attributes stay on
+  # the EMHASS sensors.
+  - sensor:
+      - name: "EMHASS plan value"
+        unique_id: emhass_plan_value
+        unit_of_measurement: "NZD"
+        icon: mdi:cash
+        availability: "{{ is_number(states('sensor.total_cost_fun_value')) }}"
+        state: "{{ states('sensor.total_cost_fun_value') }}"
+
+      - name: "EMHASS import price"
+        unique_id: emhass_import_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-import
+        availability: "{{ is_number(states('sensor.unit_load_cost')) }}"
+        state: "{{ states('sensor.unit_load_cost') }}"
+
+      - name: "EMHASS export price"
+        unique_id: emhass_export_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-export
+        availability: "{{ is_number(states('sensor.unit_prod_price')) }}"
+        state: "{{ states('sensor.unit_prod_price') }}"
+
 automation:
   - alias: "EMHASS - optimise and publish"
     id: emhass_optimise_and_publish

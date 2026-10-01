@@ -393,7 +393,7 @@ views:
             entity: sensor.optim_status
             name: Status
           - type: tile
-            entity: sensor.total_cost_fun_value
+            entity: sensor.emhass_plan_value
             name: Plan value
           - type: tile
             entity: sensor.p_batt_forecast
@@ -408,10 +408,10 @@ views:
             entity: sensor.al2002118050331_instantaneous_battery_soc
             name: Actual SOC
           - type: tile
-            entity: sensor.unit_load_cost
+            entity: sensor.emhass_import_price
             name: Import price
           - type: tile
-            entity: sensor.unit_prod_price
+            entity: sensor.emhass_export_price
             name: Export price
       - type: grid
         column_span: 2

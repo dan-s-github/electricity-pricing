@@ -189,8 +189,8 @@ views:
             title: Cumulative cost / earnings this cycle
             hours_to_show: 720
             entities:
-              - sensor.electricity_import_cost_total
-              - sensor.electricity_export_earnings_total
+              - entity: sensor.grid_import_cost_billing
+              - entity: sensor.grid_export_earnings_billing
   - type: sections
     title: Pricing v2
     path: electricity-pricing-v2

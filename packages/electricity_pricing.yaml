@@ -36,16 +36,16 @@ input_number:
   # Price forecast accuracy snapshots
   overnight_price_forecast_snapshot:
     name: Overnight charge price forecast snapshot
-    min: 0
-    max: 2
+    min: -10
+    max: 20
     step: 0.001
     unit_of_measurement: NZD/kWh
     mode: box
     icon: mdi:chart-line
   peak_export_price_forecast_snapshot:
     name: Peak export price forecast snapshot
-    min: 0
-    max: 2
+    min: -10
+    max: 20
     step: 0.001
     unit_of_measurement: NZD/kWh
     mode: box

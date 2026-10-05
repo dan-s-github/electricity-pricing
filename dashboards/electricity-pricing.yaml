@@ -71,7 +71,7 @@ views:
                   in_chart: false
                   in_header: true
             yaxis:
-              - min: 0
+              - min: ~0
                 decimals: 3
           - type: tile
             entity: sensor.ros0221_c_kwh_live_price
@@ -109,7 +109,7 @@ views:
       - type: grid
         cards:
           - type: heading
-            heading: Live pricing
+            heading: Settled pricing
             heading_style: title
             badges:
               - type: entity
@@ -292,7 +292,7 @@ views:
       - type: grid
         cards:
           - type: heading
-            heading: Price forcast
+            heading: Price forecast
             heading_style: title
           - type: entities
             title: Price forecast accuracy

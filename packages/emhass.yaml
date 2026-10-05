@@ -61,7 +61,7 @@ rest_command:
           the horizon rolls forward every run, so the end state is never reached -#}
       {{ {
         "prediction_horizon": [ns.cost | length, 48] | min,
-        "soc_init": states('sensor.al2002118050331_instantaneous_battery_soc') | float(50) / 100,
+        "soc_init": states('sensor.al2002118050331_instantaneous_battery_soc') | float / 100,
         "soc_final": 0.12,
         "load_cost_forecast": dict(ns.cost),
         "prod_price_forecast": dict(ns.prod),
@@ -140,6 +140,13 @@ automation:
         value_template: >-
           {{ (state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or []) | length >= 5
              and (state_attr('sensor.helios_forecast_power_now', 'forecast') or []) | length > 0 }}
+      # The payload needs the current period's prices and the real SOC;
+      # without them it would drop period 0 or plan from a made-up 50%.
+      - condition: template
+        value_template: >-
+          {{ is_number(states('sensor.electricity_import_price_live'))
+             and is_number(states('sensor.electricity_spot_price_live'))
+             and is_number(states('sensor.al2002118050331_instantaneous_battery_soc')) }}
     actions:
       - action: rest_command.emhass_naive_mpc_optim
         response_variable: optim

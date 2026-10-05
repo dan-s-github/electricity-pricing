@@ -263,7 +263,7 @@ views:
             entities:
               - entity: sensor.solcast_pv_forecast_forecast_tomorrow
                 name: Solcast
-              - entity: sensor.helios_forecast_energy_day_1
+              - entity: sensor.helios_forecast_energy_day_2
                 name: Helios
               - entity: sensor.energy_production_tomorrow
                 name: Forecast.Solar

@@ -107,15 +107,22 @@ independent trigger paths rather than one.
 
 ### Two trigger paths, OR'd together
 
-**Self-use case:** charge if the live import price is cheap AND tomorrow's
-solar forecast (see below) won't cover the battery need anyway. Point is
+**Self-use case:** charge if the live import price is cheap AND the solar
+forecast for the coming daylight (see below) won't cover the battery need
+anyway. Point is
 to avoid buying grid power on a night that's about to be followed by a
 sunny day that would've filled the battery for free.
 
 **Arbitrage case:** charge if forecast peak export price tomorrow, net of
 round-trip efficiency, exceeds the live charge cost by more than a minimum
 margin. Point is deliberately buying cheap overnight power to resell at a
-profit during tomorrow's peak export window — independent of self-use need.
+profit during the next peak export window — independent of self-use need.
+
+"Coming daylight" and "next peak" mean the day the charge window serves.
+The window opens after midnight, so until it ends that is *today*, and
+from then on *tomorrow* (`sensor.solar_forecast_next_daylight`, and the
+date logic in `sensor.forecast_peak_export_price`). The 23:56 snapshots
+therefore still capture tomorrow's forecasts.
 
 Both paths are gated by `battery_charge_window_active` (see below) and
 require more than 0.5 kWh of need, measured against that case's target cap
@@ -229,6 +236,23 @@ design choices)
    This also means fix 4 never worked as intended: its "switch first"
    backstop order was itself the failing order.
 
+7. **Decisions used the wrong day's forecasts.** (2026-10-05, from a
+   Copilot review) Two date mistakes, both from treating "tomorrow" as
+   the day the charge window serves:
+   - *After midnight.* The window runs 00:00-04:00, when the "tomorrow"
+     forecasts already describe the day after the coming daylight. The
+     self-use case read the wrong day's solar, and the arbitrage case
+     looked for tomorrow's peak - outside the ~24 h day-ahead horizon in
+     winter, so it found nothing and arbitrage could never trigger.
+   - *Helios day numbering.* Helios counts from today (`energy_day_1` =
+     today, `energy_day_2` = tomorrow), but `day_1` was used as tomorrow
+     alongside Solcast and Forecast.Solar, both in the minimum and in the
+     23:56 accuracy snapshot.
+
+   **Fixed**: `sensor.solar_forecast_next_daylight` picks today's or
+   tomorrow's forecasts by whether the charge window has ended, the peak
+   export price uses the same rule, and the Helios snapshot uses `day_2`.
+
 ### Legacy automations, now retired
 
 Two older automations ("Battery Charge - Low Spot Price" /
@@ -261,6 +285,10 @@ on it yet, the grid-charge advisory above still controls the inverter.
   day (actual was 36-73% of forecast) and Forecast.Solar under-forecast
   every day, which looks like site setup rather than weather. Helios still
   missed by 12-15 kWh on three of the eight days. Small sample - revisit.
+  **Caveat:** these came from the accuracy sensors, whose Helios snapshot
+  was the wrong day until 2026-10-05 (bug 7), so the Helios figure
+  compared each day's forecast with the next day's actual. Redo the
+  comparison before relying on it.
 - **Rate constants are duplicated** in the `rest_command` payload - update
   them there too when Vector's rates change.
 - **Plant values are measured, not from a datasheet:** 11.4 kWh installed,
@@ -303,6 +331,14 @@ than half-hourly prices do.
   loss factor change again.
 - **`offset:` for utility meters** is commented out — bill cycle start day
   (1st of month) is assumed; adjust if the actual billing cycle differs.
+- **Charge window is read to the hour.** The overnight price sensors and
+  `battery_charge_window_active` use only the hour of the inverter's
+  charge start/end times, don't handle a window that crosses midnight
+  (e.g. 22:00-04:00), and fall back to 00:00-04:00 when the times are
+  unavailable. Fine for the current 00:00-04:00 window.
+- **Cap isn't re-applied mid-charge.** If the arbitrage case starts while
+  a self-use charge is already running (or a cap helper is edited), the
+  follow automation doesn't re-run, so the 50% self-use cap stays.
 - **GST toggle exists but untested at 1.0** — set `gst = 1.0` in the three
   price sensor templates for ex-GST figures if ever needed; not verified
   end-to-end.

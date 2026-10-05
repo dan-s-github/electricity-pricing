@@ -2,8 +2,8 @@
 # Meters: Alpha ESS (al2002118050331). Import = grid_to_load + grid_to_battery.
 # GST: gst = 1.15 in the price sensors; set to 1.0 for ex-GST figures
 # Battery grid-charge advisory: live price gated to the actual charge window, self-use case
-#   (Solcast + Helios + Forecast.Solar, min taken) OR arbitrage case (live charge cost vs
-#   forecast peak export price, net of round-trip efficiency)
+#   (Solcast + Helios + Forecast.Solar for the coming daylight, min taken) OR arbitrage case
+#   (live charge cost vs forecast peak export price, net of round-trip efficiency)
 # Forecast accuracy tracking: solar (3 sources) + price (overnight/peak windows), nightly snapshot vs next-day actual
 
 input_number:
@@ -123,20 +123,12 @@ template:
         unique_id: battery_grid_charge_recommended
         icon: mdi:battery-charging-outline
         attributes:
-          solcast_tomorrow_kwh: "{{ states('sensor.solcast_pv_forecast_forecast_tomorrow') | float(0) }}"
-          helios_tomorrow_kwh: "{{ states('sensor.helios_forecast_energy_day_1') | float(0) }}"
-          forecast_solar_tomorrow_kwh: "{{ states('sensor.energy_production_tomorrow') | float(0) }}"
-          solar_forecast_used_kwh: >
-            {{ [states('sensor.solcast_pv_forecast_forecast_tomorrow') | float(999),
-                states('sensor.helios_forecast_energy_day_1') | float(999),
-                states('sensor.energy_production_tomorrow') | float(999)] | min }}
+          solar_forecast_used_kwh: "{{ states('sensor.solar_forecast_next_daylight') | float(999) }}"
           arbitrage_margin: "{{ states('sensor.battery_arbitrage_margin') | float(0) }}"
           window_active: "{{ is_state('binary_sensor.battery_charge_window_active', 'on') }}"
           self_use_triggered: >
             {{ states('sensor.electricity_import_price_live') | float(999) < (states('input_number.battery_charge_price_threshold') | float(0.14))
-               and [states('sensor.solcast_pv_forecast_forecast_tomorrow') | float(999),
-                    states('sensor.helios_forecast_energy_day_1') | float(999),
-                    states('sensor.energy_production_tomorrow') | float(999)] | min
+               and states('sensor.solar_forecast_next_daylight') | float(999)
                    < (states('input_number.battery_charge_solar_threshold') | float(20)) }}
           arbitrage_triggered: >
             {{ states('sensor.battery_arbitrage_margin') | float(-999)
@@ -147,10 +139,7 @@ template:
           {% set arbitrage_buffer = states('input_number.battery_arbitrage_min_margin') | float(0.02) %}
 
           {% set price = states('sensor.electricity_import_price_live') | float(999) %}
-          {% set solcast = states('sensor.solcast_pv_forecast_forecast_tomorrow') | float(999) %}
-          {% set helios = states('sensor.helios_forecast_energy_day_1') | float(999) %}
-          {% set fsolar = states('sensor.energy_production_tomorrow') | float(999) %}
-          {% set solar_tomorrow = [solcast, helios, fsolar] | min %}
+          {% set solar_next = states('sensor.solar_forecast_next_daylight') | float(999) %}
           {% set margin = states('sensor.battery_arbitrage_margin') | float(-999) %}
           {% set window_active = is_state('binary_sensor.battery_charge_window_active', 'on') %}
 
@@ -158,7 +147,9 @@ template:
              the follow automation lowers bathighcap when charging starts, which would
              otherwise zero the need and flip this sensor straight back off. #}
           {% set capacity = states('sensor.al2002118050331_installed_capacity') | float(0) %}
-          {% set soc = states('sensor.al2002118050331_instantaneous_battery_soc') | float(0) %}
+          {# Unknown SOC counts as full: no need in either case, so the
+             recommendation turns off rather than charging blind. #}
+          {% set soc = states('sensor.al2002118050331_instantaneous_battery_soc') | float(100) %}
           {% set overnight_cap = states('input_number.battery_overnight_charge_cap') | float(50) %}
           {% set normal_cap = states('input_number.battery_normal_charge_cap') | float(100) %}
           {% set self_use_need = capacity * (overnight_cap - soc) / 100 %}
@@ -169,7 +160,7 @@ template:
              charging starts drops the need back under 0.5 and stops it again. #}
           {% set min_need = 0 if this is defined and this.state == 'on' else 0.5 %}
 
-          {% set self_use_case = price < price_threshold and solar_tomorrow < solar_threshold_kwh and self_use_need > min_need %}
+          {% set self_use_case = price < price_threshold and solar_next < solar_threshold_kwh and self_use_need > min_need %}
           {% set arbitrage_case = margin > arbitrage_buffer and arbitrage_need > min_need %}
 
           {{ window_active and (self_use_case or arbitrage_case) }}
@@ -303,7 +294,35 @@ template:
 
           {{ [((capacity * high_cap / 100) - (capacity * soc / 100)), 0] | max | round(2) }}
 
-      - name: "Forecast overnight window price"
+      # Minimum of the three solar forecasts for the daylight the next (or
+      # current) charge window serves. The window opens after midnight, so
+      # until it ends that is today; from then on it is tomorrow.
+      # Helios numbers its days from today (day_1 = today, day_2 = tomorrow).
+      - name: "Solar forecast next daylight"
+        unique_id: solar_forecast_next_daylight
+        unit_of_measurement: "kWh"
+        icon: mdi:weather-sunny-alert
+        availability: >
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set day = 'today' if now().strftime('%H:%M:%S') < end else 'tomorrow' %}
+          {{ [states('sensor.solcast_pv_forecast_forecast_' ~ day),
+              states('sensor.helios_forecast_energy_day_' ~ ('1' if day == 'today' else '2')),
+              states('sensor.energy_production_' ~ day)] | select('is_number') | list | count > 0 }}
+        attributes:
+          day: >
+            {% set end = states('time.al2002118050331_charge_end_time_1') %}
+            {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+            {{ 'today' if now().strftime('%H:%M:%S') < end else 'tomorrow' }}
+        state: >
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set day = 'today' if now().strftime('%H:%M:%S') < end else 'tomorrow' %}
+          {{ [states('sensor.solcast_pv_forecast_forecast_' ~ day),
+              states('sensor.helios_forecast_energy_day_' ~ ('1' if day == 'today' else '2')),
+              states('sensor.energy_production_' ~ day)] | select('is_number') | map('float') | min | round(2) }}
+
+      - name: "Overnight charge window price"
         unique_id: overnight_charge_window_price
         unit_of_measurement: "NZD/kWh"
         state_class: measurement
@@ -342,7 +361,11 @@ template:
           {% set gst = 1.15 %}
           {% set peak_credit = 0.0524 %}
           {% set periods = state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] %}
-          {% set target_date = (now() + timedelta(days=1)).date() %}
+          {# The peak the next (or current) charge window serves: today until
+             the window ends, tomorrow after - so 23:56 snapshots tomorrow's. #}
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set target_date = now().date() if now().strftime('%H:%M:%S') < end else (now() + timedelta(days=1)).date() %}
           {% set target_month = target_date.month %}
 
           {% if target_month in [5, 9] %}
@@ -413,8 +436,8 @@ template:
         device_class: monetary
         state_class: total
         state: >
-          {% set old = trigger.from_state.state | float(none) %}
-          {% set new = trigger.to_state.state | float(none) %}
+          {% set old = trigger.from_state.state | float(none) if trigger.from_state else none %}
+          {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
           {% set prev = this.state | float(0) %}
 
           {% if old is none or new is none or new < old %}
@@ -433,8 +456,8 @@ template:
         device_class: monetary
         state_class: total
         state: >
-          {% set old = trigger.from_state.state | float(none) %}
-          {% set new = trigger.to_state.state | float(none) %}
+          {% set old = trigger.from_state.state | float(none) if trigger.from_state else none %}
+          {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
           {% set prev = this.state | float(0) %}
 
           {% if old is none or new is none or new < old %}
@@ -597,19 +620,28 @@ utility_meter:
     source: sensor.al2002118050331_solar_to_grid
     cycle: daily
 
-  # Cost / earnings
+  # Cost / earnings. The totals drop when a price is negative, so count
+  # decreases as credits (net_consumption) rather than as a source reset.
   grid_import_cost_daily:
     source: sensor.electricity_import_cost_total
     cycle: daily
+    net_consumption: true
+    periodically_resetting: false
   grid_import_cost_billing:
     source: sensor.electricity_import_cost_total
     cycle: monthly
+    net_consumption: true
+    periodically_resetting: false
   grid_export_earnings_daily:
     source: sensor.electricity_export_earnings_total
     cycle: daily
+    net_consumption: true
+    periodically_resetting: false
   grid_export_earnings_billing:
     source: sensor.electricity_export_earnings_total
     cycle: monthly
+    net_consumption: true
+    periodically_resetting: false
 
 automation:
   - alias: "Utility meter tariff follows Vector peak"
@@ -643,7 +675,7 @@ automation:
         target:
           entity_id: input_number.helios_forecast_snapshot
         data:
-          value: "{{ states('sensor.helios_forecast_energy_day_1') | float(0) }}"
+          value: "{{ states('sensor.helios_forecast_energy_day_2') | float(0) }}"
       - action: input_number.set_value
         target:
           entity_id: input_number.forecast_solar_snapshot

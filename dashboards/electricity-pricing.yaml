@@ -204,6 +204,8 @@ views:
             heading_style: title
             badges:
               - type: entity
+                show_state: true
+                show_icon: true
                 entity: binary_sensor.battery_grid_charge_recommended
                 name: Recommended
                 tap_action:
@@ -402,6 +404,8 @@ views:
           - type: tile
             entity: sensor.emhass_plan_value
             name: Plan value
+            vertical: false
+            features_position: bottom
           - type: tile
             entity: sensor.p_batt_forecast
             name: Battery now (+ discharge)
@@ -417,9 +421,13 @@ views:
           - type: tile
             entity: sensor.emhass_import_price
             name: Import price
+            vertical: false
+            features_position: bottom
           - type: tile
             entity: sensor.emhass_export_price
             name: Export price
+            vertical: false
+            features_position: bottom
       - type: grid
         column_span: 2
         cards:

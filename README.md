@@ -60,7 +60,10 @@ Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
      packages: !include_dir_named integrations
    ```
 
-2. Copy `packages/*.yaml` into `/config/integrations/`.
+2. Copy `packages/electricity_pricing.yaml` into `/config/integrations/`.
+   Add `packages/emhass.yaml` only if you also install the EMHASS add-on
+   (below); without it, its automation calls a missing endpoint twice an
+   hour.
 3. Run `ha core check`, then restart Home Assistant. A template reload is
    not enough for new entities or utility meters.
 4. Set the helpers, which have no defaults and start at their minimum:
@@ -81,7 +84,8 @@ Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
 
 1. Copy `emhass/config.json` to `/addon_configs/5b918bf2_emhass/config.json`
    and restart the add-on.
-2. `packages/emhass.yaml` is installed with the other packages above. It
+2. Copy `packages/emhass.yaml` into `/config/integrations/` next to the
+   pricing package, then run `ha core check` and restart. It
    runs at :01 and :31 past each hour and publishes `sensor.p_batt_forecast`,
    `sensor.soc_batt_forecast`, `sensor.p_grid_forecast` and related sensors.
 

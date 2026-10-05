@@ -339,6 +339,11 @@ than half-hourly prices do.
 - **Cap isn't re-applied mid-charge.** If the arbitrage case starts while
   a self-use charge is already running (or a cap helper is edited), the
   follow automation doesn't re-run, so the 50% self-use cap stays.
+- **"EMHASS grid charge planned" can go stale.** It reads
+  `p_batt_forecast` / `p_grid_forecast`, which only advance when the
+  :01/:31 publish runs (`continual_publish: false`). If a run is skipped,
+  the indicator keeps the previous period's plan. Advisory only, nothing
+  acts on it.
 - **GST toggle exists but untested at 1.0** — set `gst = 1.0` in the three
   price sensor templates for ex-GST figures if ever needed; not verified
   end-to-end.

@@ -712,6 +712,23 @@ automation:
       - trigger: homeassistant
         event: start
         id: start
+      # The startup wait gives up after 10 min, so also sync when the cloud
+      # switch comes back later. Only from unavailable/unknown, so this
+      # automation's own on/off writes don't retrigger it.
+      - trigger: state
+        entity_id: switch.al2002118050331_grid_charge_enabled
+        from: ["unavailable", "unknown"]
+        to: ["on", "off"]
+        id: switch_recovered
+    conditions:
+      # After a switch recovery, only write if it disagrees with the
+      # recommendation - the cloud drops out often enough that re-sending
+      # the config on every recovery would be noise.
+      - condition: template
+        value_template: >-
+          {{ trigger.id != 'switch_recovered'
+             or states('switch.al2002118050331_grid_charge_enabled')
+                != states('binary_sensor.battery_grid_charge_recommended') }}
     actions:
       # At startup the recommendation can still be unknown and the Alpha ESS
       # (cloud) switch unavailable - neither branch would match, or turn_off

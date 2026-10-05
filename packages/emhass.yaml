@@ -42,10 +42,12 @@ rest_command:
 
       {#- Future trading periods: day-ahead forecast (c/kWh). Skip the current
           period: the forecast polls every 5 min, so at :01/:31 it can still
-          hold it, and that row would overwrite the live price above. -#}
+          hold it, and that row would overwrite the live price above.
+          Compare timestamps: same-zone datetimes compare by wall clock,
+          which gets the DST rollback hour wrong. -#}
       {%- for p in state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] -%}
         {%- set dt = as_datetime(p.period_start) | as_local -%}
-        {%- if dt > period_start -%}
+        {%- if dt.timestamp() > period_start.timestamp() -%}
           {%- set peak = (dt.month in [5, 9] and 17 <= dt.hour < 22)
                          or (dt.month in [6, 7, 8] and (7 <= dt.hour < 11 or 17 <= dt.hour < 22)) -%}
           {%- set spot = p.price / 100 -%}

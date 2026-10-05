@@ -456,7 +456,7 @@ views:
                 decimals: 0
               - id: price
                 opposite: true
-                min: 0
+                min: ~0
                 decimals: 2
             series:
               - entity: sensor.soc_batt_forecast

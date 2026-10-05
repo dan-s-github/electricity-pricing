@@ -259,18 +259,20 @@ views:
                 style: buttons
             features_position: inline
           - type: entities
-            title: Solar forecasts for tomorrow
+            title: Solar forecasts
             entities:
               - entity: sensor.solcast_pv_forecast_forecast_tomorrow
-                name: Solcast
+                name: Solcast (tomorrow)
               - entity: sensor.helios_forecast_energy_day_2
-                name: Helios
+                name: Helios (tomorrow)
               - entity: sensor.energy_production_tomorrow
-                name: Forecast.Solar
+                name: Forecast.Solar (tomorrow)
+              - entity: sensor.solar_forecast_next_daylight
+                name: Used for charging (minimum)
               - type: attribute
-                entity: binary_sensor.battery_grid_charge_recommended
-                attribute: solar_forecast_used_kwh
-                name: Used (minimum)
+                entity: sensor.solar_forecast_next_daylight
+                attribute: day
+                name: Forecast day used
       - type: grid
         cards:
           - type: heading

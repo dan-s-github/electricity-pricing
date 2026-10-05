@@ -29,7 +29,8 @@ rest_command:
       {%- set ns = namespace(cost=[], prod=[], pv=[]) -%}
 
       {#- Current trading period: live price, already landed -#}
-      {%- set period_now = now().replace(minute=(now().minute // 30) * 30, second=0, microsecond=0).isoformat() -%}
+      {%- set period_start = now().replace(minute=(now().minute // 30) * 30, second=0, microsecond=0) -%}
+      {%- set period_now = period_start.isoformat() -%}
       {%- set peak_now = is_state('binary_sensor.vector_peak_period', 'on') -%}
       {%- if is_number(states('sensor.electricity_import_price_live')) -%}
         {%- set ns.cost = ns.cost + [(period_now, states('sensor.electricity_import_price_live') | float)] -%}
@@ -39,15 +40,19 @@ rest_command:
         {%- set ns.prod = ns.prod + [(period_now, ((spot_now + (peak_credit if peak_now else 0)) * gst) | round(4))] -%}
       {%- endif -%}
 
-      {#- Future trading periods: day-ahead forecast (c/kWh) -#}
+      {#- Future trading periods: day-ahead forecast (c/kWh). Skip the current
+          period: the forecast polls every 5 min, so at :01/:31 it can still
+          hold it, and that row would overwrite the live price above. -#}
       {%- for p in state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] -%}
         {%- set dt = as_datetime(p.period_start) | as_local -%}
-        {%- set peak = (dt.month in [5, 9] and 17 <= dt.hour < 22)
-                       or (dt.month in [6, 7, 8] and (7 <= dt.hour < 11 or 17 <= dt.hour < 22)) -%}
-        {%- set spot = p.price / 100 -%}
-        {%- set network = peak_rate if peak else offpeak_rate -%}
-        {%- set ns.cost = ns.cost + [(p.period_start, ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4))] -%}
-        {%- set ns.prod = ns.prod + [(p.period_start, ((spot + (peak_credit if peak else 0)) * gst) | round(4))] -%}
+        {%- if dt > period_start -%}
+          {%- set peak = (dt.month in [5, 9] and 17 <= dt.hour < 22)
+                         or (dt.month in [6, 7, 8] and (7 <= dt.hour < 11 or 17 <= dt.hour < 22)) -%}
+          {%- set spot = p.price / 100 -%}
+          {%- set network = peak_rate if peak else offpeak_rate -%}
+          {%- set ns.cost = ns.cost + [(p.period_start, ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4))] -%}
+          {%- set ns.prod = ns.prod + [(p.period_start, ((spot + (peak_credit if peak else 0)) * gst) | round(4))] -%}
+        {%- endif -%}
       {%- endfor -%}
 
       {#- Helios: watts per bucket; EMHASS averages sub-30-min buckets itself.

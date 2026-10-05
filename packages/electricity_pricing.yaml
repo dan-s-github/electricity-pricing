@@ -342,6 +342,7 @@ template:
 
           {% for p in periods %}
             {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
             {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
               {% set spot = p.price / 100 %}
               {% set landed = (spot * (1 + loss) + offpeak_rate + transmission + levy) * gst %}
@@ -378,6 +379,7 @@ template:
           {% set ns = namespace(total=0, count=0) %}
           {% for p in periods %}
             {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
             {% if dt and dt.date() == target_date %}
               {% for w in windows %}
                 {% if w[0] <= dt.hour < w[1] %}
@@ -529,6 +531,7 @@ template:
 
           {% for p in periods %}
             {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
             {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
               {% set spot = p.price / 100 %}
               {% set landed = (spot * (1 + loss) + offpeak_rate + transmission + levy) * gst %}
@@ -560,6 +563,7 @@ template:
           {% set ns = namespace(total=0, count=0) %}
           {% for p in periods %}
             {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
             {% if dt and dt.date() == target_date %}
               {% for w in windows %}
                 {% if w[0] <= dt.hour < w[1] %}

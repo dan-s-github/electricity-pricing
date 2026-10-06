@@ -337,7 +337,11 @@ template:
           {% set periods = state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] %}
           {% set start_h = states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) %}
           {% set end_h = states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) %}
-          {% set target_date = (now() + timedelta(days=1)).date() %}
+          {# The next (or current) charge window: today until it ends, tomorrow
+             after - same rule as the forecast peak export price. #}
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set target_date = now().date() if now().strftime('%H:%M:%S') < end else (now() + timedelta(days=1)).date() %}
           {% set ns = namespace(total=0, count=0) %}
 
           {% for p in periods %}
@@ -350,7 +354,8 @@ template:
               {% set ns.count = ns.count + 1 %}
             {% endif %}
           {% endfor %}
-          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else 0 }}
+          {# No periods means the day isn't published yet: unknown, not $0. #}
+          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else none }}
 
       - name: "Forecast peak export price"
         unique_id: forecast_peak_export_price
@@ -601,6 +606,11 @@ template:
         unique_id: overnight_price_forecast_accuracy
         unit_of_measurement: "NZD/kWh"
         icon: mdi:target
+        # The 23:56 snapshot is skipped when the forecast wasn't published,
+        # so a snapshot older than a day belongs to an earlier window.
+        availability: >
+          {{ states.input_number.overnight_price_forecast_snapshot is not none
+             and now() - states.input_number.overnight_price_forecast_snapshot.last_updated < timedelta(hours=24) }}
         attributes:
           forecast: "{{ states('input_number.overnight_price_forecast_snapshot') | float(0) }}"
           actual: "{{ states('sensor.actual_overnight_window_price') | float(0) }}"
@@ -705,11 +715,17 @@ automation:
           entity_id: input_number.forecast_solar_snapshot
         data:
           value: "{{ states('sensor.energy_production_tomorrow') | float(0) }}"
-      - action: input_number.set_value
-        target:
-          entity_id: input_number.overnight_price_forecast_snapshot
-        data:
-          value: "{{ states('sensor.overnight_charge_window_price') | float(0) }}"
+      # Skip rather than record 0 when tomorrow's forecast isn't out yet;
+      # the accuracy sensor then goes unavailable for that day.
+      - if:
+          - condition: template
+            value_template: "{{ is_number(states('sensor.overnight_charge_window_price')) }}"
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.overnight_price_forecast_snapshot
+            data:
+              value: "{{ states('sensor.overnight_charge_window_price') }}"
       - action: input_number.set_value
         target:
           entity_id: input_number.peak_export_price_forecast_snapshot

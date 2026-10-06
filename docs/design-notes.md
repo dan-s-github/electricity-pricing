@@ -262,6 +262,13 @@ design choices)
    unknown in that case, which makes the margin unavailable and keeps
    the arbitrage path off.
 
+   `sensor.overnight_charge_window_price` had the same 0 fallback, and
+   always looked at tomorrow, so during the window it showed $0.00 for a
+   day not yet published. It now uses the same today/tomorrow rule and is
+   unknown without data. The 23:56 snapshot skips an unknown forecast
+   instead of storing 0, and the overnight accuracy sensor is unavailable
+   when the snapshot is more than a day old.
+
 ### Legacy automations, now retired
 
 Two older automations ("Battery Charge - Low Spot Price" /

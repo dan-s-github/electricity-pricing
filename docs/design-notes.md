@@ -253,6 +253,15 @@ design choices)
    tomorrow's forecasts by whether the charge window has ended, the peak
    export price uses the same rule, and the Helios snapshot uses `day_2`.
 
+8. **No peak read as a zero export price.** (2026-10-06, from a Copilot
+   review) With no peak periods on the target day (October-April, or the
+   day not yet published), `sensor.forecast_peak_export_price` reported
+   0, so the arbitrage margin became `-live_price`. A live import price
+   below -0.02 NZD/kWh would then trigger arbitrage and charge to the
+   normal cap with no peak to export into. **Fixed**: the sensor is
+   unknown in that case, which makes the margin unavailable and keeps
+   the arbitrage path off.
+
 ### Legacy automations, now retired
 
 Two older automations ("Battery Charge - Low Spot Price" /

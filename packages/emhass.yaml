@@ -142,11 +142,27 @@ automation:
     conditions:
       # MPC needs a usable price horizon and a PV forecast; skip the run rather
       # than optimise against the static fallback prices and default panel
-      # model in config.json.
+      # model in config.json. Count only rows the payload can use: a retained
+      # forecast can be all expired rows, which would leave a horizon of just
+      # the live period. Same period boundary and timestamp compare as the
+      # payload.
       - condition: template
         value_template: >-
-          {{ (state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or []) | length >= 5
-             and (state_attr('sensor.helios_forecast_power_now', 'forecast') or []) | length > 0 }}
+          {%- set period_start = now().replace(minute=(now().minute // 30) * 30, second=0, microsecond=0).timestamp() -%}
+          {%- set ns = namespace(prices=0, pv=0) -%}
+          {%- for p in state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] -%}
+            {%- set dt = as_datetime(p.period_start) -%}
+            {%- if dt and dt.timestamp() > period_start -%}
+              {%- set ns.prices = ns.prices + 1 -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- for p in state_attr('sensor.helios_forecast_power_now', 'forecast') or [] -%}
+            {%- set dt = as_datetime(p.datetime) -%}
+            {%- if dt and dt.timestamp() >= period_start -%}
+              {%- set ns.pv = ns.pv + 1 -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ ns.prices >= 5 and ns.pv > 0 }}
       # The payload needs the current period's prices and the real SOC;
       # without them it would drop period 0 or plan from a made-up 50%.
       - condition: template

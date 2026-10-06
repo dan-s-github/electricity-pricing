@@ -391,7 +391,11 @@ template:
               {% endfor %}
             {% endif %}
           {% endfor %}
-          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else 0 }}
+          {# No peak periods (Oct-Apr, or the day isn't published yet) means no
+             forecast, not a 0 price: 0 would turn a negative live import price
+             into a positive arbitrage margin. Unknown makes the margin sensor
+             unavailable, which turns the arbitrage path off. #}
+          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else none }}
 
       - name: "Battery arbitrage margin"
         unique_id: battery_arbitrage_margin
@@ -437,8 +441,17 @@ template:
         unit_of_measurement: "NZD"
         device_class: monetary
         state_class: total
+        # last_reading is the last numeric source value. It's restored across
+        # HA restarts, so usage during a source outage still counts on
+        # recovery, when from_state is unavailable.
+        attributes:
+          last_reading: >
+            {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
+            {{ new if new is not none else this.attributes.get('last_reading') }}
         state: >
+          {% set last = this.attributes.get('last_reading') | float(none) %}
           {% set old = trigger.from_state.state | float(none) if trigger.from_state else none %}
+          {% set old = last if last is not none else old %}
           {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
           {% set prev = this.state | float(0) %}
 
@@ -457,8 +470,15 @@ template:
         unit_of_measurement: "NZD"
         device_class: monetary
         state_class: total
+        # last_reading: see the import cost total above.
+        attributes:
+          last_reading: >
+            {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
+            {{ new if new is not none else this.attributes.get('last_reading') }}
         state: >
+          {% set last = this.attributes.get('last_reading') | float(none) %}
           {% set old = trigger.from_state.state | float(none) if trigger.from_state else none %}
+          {% set old = last if last is not none else old %}
           {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
           {% set prev = this.state | float(0) %}
 

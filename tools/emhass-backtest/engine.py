@@ -48,14 +48,15 @@ def _optimiser(overrides, n):
     key = (tuple(sorted(overrides.items())), n)
     if key not in _cache:
         rh, oc, pc = (copy.deepcopy(c) for c in _BASE)
-        oc.update(overrides)
+        for k, v in overrides.items():  # plant keys (efficiencies, ...) vs optim keys
+            (pc if k in pc else oc)[k] = v
         _cache[key] = Optimization(rh, oc, pc, "unit_load_cost", "unit_prod_price", "profit",
                                    EMHASS_CONF, logger, num_timesteps=n)
     return _cache[key]
 
 
 def plan(overrides, index, load_cost, prod_price, pv, load, soc_init, soc_final=0.12):
-    """One naive-MPC solve; overrides are optim_conf keys (e.g. reward factor)."""
+    """One naive-MPC solve; overrides are optim_conf or plant_conf keys."""
     df = pd.DataFrame({"unit_load_cost": load_cost, "unit_prod_price": prod_price}, index=index)
     opt = _optimiser(overrides, len(index))
     return opt.perform_naive_mpc_optim(df, pd.Series(pv, index=index), pd.Series(load, index=index),

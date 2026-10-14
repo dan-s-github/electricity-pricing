@@ -20,16 +20,24 @@ TZ = "Pacific/Auckland"
 
 # Same constants as the emhass_naive_mpc_optim payload in packages/emhass.yaml
 GST, LOSS, PEAK, OFF, TRANS, LEVY, CREDIT = 1.15, 0.0476, 0.1504, 0.0457, 0.0302, 0.002, 0.0524
-# Battery model, matching emhass/config.json
-CAP, SOC_MIN, SOC_MAX, PMAX, EFF = 11400.0, 0.12, 1.0, 4800.0, 0.95
+# Battery model for the simulation. Efficiencies are measured, not from
+# config: 10 Aug-13 Oct 2026 the battery's SOC rose 8.66%/kWh charged and fell
+# 9.01%/kWh discharged (round trip 0.98).
+CAP, SOC_MIN, SOC_MAX, PMAX = 11400.0, 0.12, 1.0, 4800.0
+EFF_CH, EFF_DIS = 0.99, 0.975
 
-# Strategies to compare. EMHASS entries are optim_conf overrides on top of the
-# repo's emhass/config.json; edit freely.
+# Strategies to compare. EMHASS entries override optim_conf or plant_conf keys
+# from the repo's emhass/config.json; edit freely.
 EMHASS = {
     "emhass_f0": {"battery_soc_final_reward_factor": 0.0, "set_nodischarge_to_grid": True},
     "emhass_f03": {"battery_soc_final_reward_factor": 0.3, "set_nodischarge_to_grid": True},
     "emhass_f09": {"battery_soc_final_reward_factor": 0.9, "set_nodischarge_to_grid": True},
     "emhass_f03_export": {"battery_soc_final_reward_factor": 0.3, "set_nodischarge_to_grid": False},
+    # Measured efficiencies instead of config's 0.95/0.95
+    "emhass_f03_eff": {"battery_soc_final_reward_factor": 0.3, "set_nodischarge_to_grid": True,
+                       "battery_charge_efficiency": 0.99, "battery_discharge_efficiency": 0.975},
+    "emhass_f03_export_eff": {"battery_soc_final_reward_factor": 0.3, "set_nodischarge_to_grid": False,
+                              "battery_charge_efficiency": 0.99, "battery_discharge_efficiency": 0.975},
 }
 BASELINES = ["self_use", "automation", "rule_gated", "rule_ungated"]
 
@@ -46,6 +54,16 @@ SCENARIOS = ["actual", "winter"]
 prep = pickle.load(open(DATA / "prepared.pkl", "rb"))
 per, snaps = prep["per"], prep["snaps"]
 snap_ts = pd.DatetimeIndex([s[0] for s in snaps])
+helios_snaps = prep.get("helios_snaps", [])
+helios_ts = pd.DatetimeIndex([s[0] for s in helios_snaps])
+
+
+def pv_forecast(t, idx):
+    """Helios curve as published before t; else its recorded "power now" values."""
+    i = helios_ts.searchsorted(t + pd.Timedelta("90s"), side="right") - 1
+    if i >= 0 and t - helios_ts[i] < pd.Timedelta("6h"):
+        return helios_snaps[i][1].reindex(idx).fillna(0).to_numpy()
+    return per.helios.reindex(idx).fillna(0).to_numpy()
 
 
 def is_peak(t, scenario):
@@ -78,11 +96,11 @@ def apply(mode, power, soc, load, pv):
         b = net
     b = float(np.clip(b, -PMAX, PMAX))
     if b > 0:
-        b = min(b, max(soc - SOC_MIN, 0) * CAP * EFF / 0.5)
-        soc -= b * 0.5 / EFF / CAP
+        b = min(b, max(soc - SOC_MIN, 0) * CAP * EFF_DIS / 0.5)
+        soc -= b * 0.5 / EFF_DIS / CAP
     else:
-        b = max(b, -max(SOC_MAX - soc, 0) * CAP / EFF / 0.5)
-        soc -= b * 0.5 * EFF / CAP
+        b = max(b, -max(SOC_MAX - soc, 0) * CAP / EFF_CH / 0.5)
+        soc -= b * 0.5 * EFF_CH / CAP
     return b, soc
 
 
@@ -99,7 +117,7 @@ def emhass_mode(overrides, t, a, soc, scenario):
     spots = np.array([a.spot_live] + [fc[k] for k in fut])
     lc = np.array([imp_price(s, k, scenario) for s, k in zip(spots, idx)])
     pp = np.array([exp_price(s, k, scenario) for s, k in zip(spots, idx)])
-    pv_fc = per.helios.reindex(idx).fillna(0).to_numpy()
+    pv_fc = pv_forecast(t, idx)
     ld_fc = per.load.reindex(idx - pd.Timedelta("1D")).ffill().bfill().to_numpy()  # naive
     res = engine.plan(overrides, idx, lc, pp, pv_fc, ld_fc, soc)
     b, g = float(res.P_batt.iloc[0]), float(res.P_grid.iloc[0])
@@ -137,7 +155,7 @@ def rule_mode(t, a, soc, scenario, gated):
     if not (self_use_case or arbitrage_case):
         return "self_use", 0.0
     cap = RULE["normal_cap"] if arbitrage_case else RULE["overnight_cap"]
-    return "grid_charge", min(RULE["charge_w"], max(cap - soc, 0) * CAP / EFF / 0.5)
+    return "grid_charge", min(RULE["charge_w"], max(cap - soc, 0) * CAP / EFF_CH / 0.5)
 
 
 def run(strategy, scenario, start, end):
@@ -186,7 +204,7 @@ def summarise(out, scenario):
         # Credit/debit any difference in final battery energy vs self-use, at
         # the last day's average import price, so a strategy can't look
         # cheaper just by ending emptier.
-        adj = d.cost.sum() - (d.soc.iloc[-1] - base.soc.iloc[-1]) * CAP * EFF / 1000 * end_price
+        adj = d.cost.sum() - (d.soc.iloc[-1] - base.soc.iloc[-1]) * CAP * EFF_DIS / 1000 * end_price
         rows.append({"strategy": s, "cost $": d.cost.sum(), "end-adjusted $": adj,
                      "import kWh": imp.sum() / 2000, "export kWh": exp.sum() / 2000,
                      "grid->batt kWh": np.minimum(charge, imp).sum() / 2000,

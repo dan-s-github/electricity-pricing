@@ -65,11 +65,57 @@ per["spot_live"] = [
     for t in per.index
 ]
 
-# Min of the three solar forecasts for the next charge window's daylight (kWh)
-sol = numeric("sensor.solar_forecast_next_daylight").dropna()
-sol = sol[~sol.index.duplicated(keep="last")].sort_index()
-per["solar_next"] = [sol[: t + pd.Timedelta("90s")].iloc[-1] if len(sol[: t + pd.Timedelta("90s")]) else float("nan")
-                     for t in per.index]
+# Before 23 Sep there was no live price sensor: fall back to the settled price
+# for the current period (a small head start the real system didn't have).
+per["spot_live"] = per.spot_live.fillna(per.spot)
+
+
+def as_of(series, t):
+    s = series[: t + pd.Timedelta("90s")]
+    return s.iloc[-1] if len(s) else float("nan")
+
+
+def history(entity):
+    s = numeric(entity).dropna()
+    return s[~s.index.duplicated(keep="last")].sort_index()
+
+
+# Min of the three solar forecasts for the next charge window's daylight (kWh).
+# The sensor only exists from 5 Oct; before that, rebuild it the way its
+# template does (today until the 04:00 window end, tomorrow after).
+sol = history("sensor.solar_forecast_next_daylight")
+daily = {d: [history(e) for e in es] for d, es in {
+    "today": ["sensor.solcast_pv_forecast_forecast_today", "sensor.energy_production_today",
+              "sensor.helios_forecast_energy_day_1"],
+    "tomorrow": ["sensor.solcast_pv_forecast_forecast_tomorrow", "sensor.energy_production_tomorrow",
+                 "sensor.helios_forecast_energy_day_2"],
+}.items()}
+
+
+def solar_next(t):
+    v = as_of(sol, t)
+    if v == v:
+        return v
+    vals = [as_of(s, t) for s in daily["today" if t.hour < 4 else "tomorrow"]]
+    vals = [x for x in vals if x == x]
+    return min(vals) if vals else float("nan")
+
+
+per["solar_next"] = [solar_next(t) for t in per.index]
+
+# Helios forecast curves (Influx export only; the recorder drops this
+# attribute): (ts, half-hourly W series)
+helios_snaps = []
+for r in rows:
+    if r["entity"] != "sensor.helios_forecast_power_now":
+        continue
+    fc = json.loads(r["attrs"] or "{}").get("forecast")
+    if not fc:
+        continue
+    curve = pd.Series([p["watts"] for p in fc],
+                      index=pd.to_datetime([p["datetime"] for p in fc], utc=True).tz_convert(TZ))
+    helios_snaps.append((pd.Timestamp(r["ts"], unit="s", tz="UTC").tz_convert(TZ),
+                         curve.resample("30min").mean()))
 
 # Day-ahead forecast snapshots: (ts, {period_start: c/kWh})
 snaps = []
@@ -81,9 +127,10 @@ for r in rows:
         t = pd.Timestamp(r["ts"], unit="s", tz="UTC").tz_convert(TZ)
         snaps.append((t, {pd.Timestamp(p["period_start"]).tz_convert(TZ): p["price"] for p in a["forecast"]}))
 
-pickle.dump({"per": per, "snaps": snaps}, open(DATA / "prepared.pkl", "wb"))
+pickle.dump({"per": per, "snaps": snaps, "helios_snaps": helios_snaps}, open(DATA / "prepared.pkl", "wb"))
 
 residual = (per.load - per.pv - per.batt - per.grid).abs().mean()
-print(f"Periods {per.index[0]} .. {per.index[-1]}, {len(snaps)} price forecast snapshots")
+print(f"Periods {per.index[0]} .. {per.index[-1]}, {len(snaps)} price forecast snapshots, "
+      f"{len(helios_snaps)} Helios curves")
 print(f"Energy balance check, mean |load - pv - batt - grid|: {residual:.0f} W (should be ~0)")
 print("Missing periods per column:", per.isna().sum().to_dict())

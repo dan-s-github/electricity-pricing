@@ -33,6 +33,7 @@ to install unchanged.
 | `packages/emhass.yaml` | REST commands and automation that run EMHASS and publish its plan |
 | `emhass/config.json` | EMHASS add-on configuration (sensors, battery and inverter limits) |
 | `dashboards/electricity-pricing.yaml` | Dashboard export: Overview, Pricing, Pricing v2 and EMHASS views |
+| `tools/emhass-backtest/` | Replays recorded history through EMHASS settings and the grid-charge rule to compare them |
 | `docs/design-notes.md` | Why things are the way they are, including the bug history |
 
 ## Requirements
@@ -49,7 +50,7 @@ Custom integrations:
   dashboard charts
 
 Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
-(tested on v0.18.4).
+(tested on v0.18.5).
 
 ## Install
 

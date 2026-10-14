@@ -72,6 +72,7 @@
   "publish_deferrable_load_states": false,
   "delta_forecast_daily": 1,
   "load_cost_forecast_method": "hp_hc_periods",
+  "tariff_schedule_time_zone": "",
   "start_timesteps_of_each_deferrable_load": [],
   "end_timesteps_of_each_deferrable_load": [],
   "load_peak_hour_periods": {
@@ -137,6 +138,8 @@
   "inverter_ac_input_max": 5000,
   "inverter_efficiency_dc_ac": 1,
   "inverter_efficiency_ac_dc": 1,
+  "inverter_power_curve_dc_ac": [],
+  "inverter_power_curve_ac_dc": [],
   "inverter_stress_cost": 0,
   "inverter_stress_segments": 10,
   "compute_curtailment": false,
@@ -157,6 +160,7 @@
   "battery_soc_deficit_cost": 0,
   "battery_soc_surplus_threshold": 0.9,
   "battery_soc_surplus_cost": 0,
+  "battery_soc_final_reward_factor": 0.3,
   "capacity_cost_per_kw": 0,
   "capacity_charge_interval_timesteps": 1
 }

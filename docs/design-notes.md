@@ -313,6 +313,19 @@ on it yet, the grid-charge advisory above still controls the inverter.
   Battery power needs no sign flip (Alpha ESS reports discharge positive).
 - **No battery export** (`set_nodischarge_to_grid: true`), matching how the
   system runs today.
+- **End-of-horizon energy is valued, not penalised**
+  (`battery_soc_final_reward_factor: 0.3`, new in v0.18.5). With the
+  factor at 0, ending above `soc_final` was penalised as heavily as
+  ending below it, and since `soc_final` is the 12% floor every plan
+  drained the battery by the end of the 24 h horizon. Now each kWh left
+  over is worth 0.3 x the import price of the last period in the
+  horizon. A replay of 5-13 Oct (EMHASS 0.18.5, each run's real
+  forecasts, scored at settled prices) gave the same cost at 0 and 0.3,
+  but 0.9 cost $0.17 more over the 9 days ($0.46 with winter peak
+  tariffs applied): it grid-charged overnight to hold energy the next
+  day's sun would have supplied. In the same replay, battery export
+  lost money at October prices and was roughly break-even after battery
+  wear under winter tariffs. Redo with real winter data.
 - **PV module/tilt/azimuth in `config.json` are still EMHASS defaults.**
   They only matter if a run is made without the Helios forecast, which the
   automation's condition prevents.

@@ -1,0 +1,862 @@
+# Electricity pricing: Vector network + wholesale settled price (ROS0221)
+# Meters: Alpha ESS (al2002118050331). Import = grid_to_load + grid_to_battery.
+# GST: gst = 1.15 in the price sensors; set to 1.0 for ex-GST figures
+# Battery grid-charge advisory: live price gated to the actual charge window, self-use case
+#   (Solcast + Helios + Forecast.Solar for the coming daylight, min taken) OR arbitrage case
+#   (live charge cost vs forecast peak export price, net of round-trip efficiency)
+# Forecast accuracy tracking: solar (3 sources) + price (overnight/peak windows), nightly snapshot vs next-day actual
+
+input_number:
+  # Solar forecast accuracy snapshots
+  solcast_forecast_snapshot:
+    name: Solcast forecast snapshot
+    min: 0
+    max: 100
+    step: 0.01
+    unit_of_measurement: kWh
+    mode: box
+    icon: mdi:weather-sunny
+  helios_forecast_snapshot:
+    name: Helios forecast snapshot
+    min: 0
+    max: 100
+    step: 0.01
+    unit_of_measurement: kWh
+    mode: box
+    icon: mdi:weather-sunny
+  forecast_solar_snapshot:
+    name: Forecast.Solar snapshot
+    min: 0
+    max: 100
+    step: 0.01
+    unit_of_measurement: kWh
+    mode: box
+    icon: mdi:weather-sunny
+
+  # Price forecast accuracy snapshots
+  overnight_price_forecast_snapshot:
+    name: Overnight charge price forecast snapshot
+    min: -10
+    max: 20
+    step: 0.001
+    unit_of_measurement: NZD/kWh
+    mode: box
+    icon: mdi:chart-line
+  peak_export_price_forecast_snapshot:
+    name: Peak export price forecast snapshot
+    min: -10
+    max: 20
+    step: 0.001
+    unit_of_measurement: NZD/kWh
+    mode: box
+    icon: mdi:chart-line
+
+  # Battery grid-charge advisory thresholds
+  battery_charge_price_threshold:
+    name: Battery grid charge price threshold
+    min: 0
+    max: 1
+    step: 0.005
+    unit_of_measurement: NZD/kWh
+    mode: box
+    icon: mdi:cash
+  battery_charge_solar_threshold:
+    name: Battery grid charge solar threshold
+    min: 0
+    max: 100
+    step: 0.5
+    unit_of_measurement: kWh
+    mode: box
+    icon: mdi:weather-sunny
+  battery_round_trip_efficiency:
+    name: Battery round-trip efficiency
+    min: 50
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: box
+    icon: mdi:battery-sync
+  battery_arbitrage_min_margin:
+    name: Battery arbitrage minimum margin
+    min: 0
+    max: 0.5
+    step: 0.005
+    unit_of_measurement: NZD/kWh
+    mode: box
+    icon: mdi:cash-multiple
+
+  # Charge caps: self-use nights target a lower cap so a wrong solar forecast
+  # doesn't crowd out tomorrow's free solar. Arbitrage nights, and the daily
+  # backstop, keep the normal (full) cap. No `initial` on either cap so the
+  # values set in the UI survive restarts (`initial` resets them on every
+  # start). Both default to `min` (50) on first creation - set the normal cap
+  # to 100 once after adding this package.
+  battery_overnight_charge_cap:
+    name: Battery overnight (self-use) charge cap
+    min: 50
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: box
+    icon: mdi:battery-charging-70
+  battery_normal_charge_cap:
+    name: Battery normal charge cap
+    min: 50
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: box
+    icon: mdi:battery-charging-100
+
+template:
+  # --- Peak window, charge-window-active flag, battery grid-charge recommendation ---
+  - binary_sensor:
+      - name: "Vector peak period"
+        unique_id: vector_peak_period
+        state: >
+          {% set m = now().month %}
+          {% set h = now().hour %}
+
+          {{ (m in [5, 9] and 17 <= h < 22) or (m in [6, 7, 8] and (7 <= h < 11 or 17 <= h < 22)) }}
+
+      - name: "Battery grid charge recommended"
+        unique_id: battery_grid_charge_recommended
+        icon: mdi:battery-charging-outline
+        attributes:
+          solar_forecast_used_kwh: "{{ states('sensor.solar_forecast_next_daylight') | float(999) }}"
+          arbitrage_margin: "{{ states('sensor.battery_arbitrage_margin') | float(0) }}"
+          window_active: "{{ is_state('binary_sensor.battery_charge_window_active', 'on') }}"
+          self_use_triggered: >
+            {{ states('sensor.electricity_import_price_live') | float(999) < (states('input_number.battery_charge_price_threshold') | float(0.14))
+               and states('sensor.solar_forecast_next_daylight') | float(999)
+                   < (states('input_number.battery_charge_solar_threshold') | float(20)) }}
+          arbitrage_triggered: >
+            {{ states('sensor.battery_arbitrage_margin') | float(-999)
+               > states('input_number.battery_arbitrage_min_margin') | float(0.02) }}
+        state: >
+          {% set price_threshold = states('input_number.battery_charge_price_threshold') | float(0.14) %}
+          {% set solar_threshold_kwh = states('input_number.battery_charge_solar_threshold') | float(20) %}
+          {% set arbitrage_buffer = states('input_number.battery_arbitrage_min_margin') | float(0.02) %}
+
+          {% set price = states('sensor.electricity_import_price_live') | float(999) %}
+          {% set solar_next = states('sensor.solar_forecast_next_daylight') | float(999) %}
+          {% set margin = states('sensor.battery_arbitrage_margin') | float(-999) %}
+          {% set window_active = is_state('binary_sensor.battery_charge_window_active', 'on') %}
+
+          {# Need is measured against each case's target cap, not the live bathighcap:
+             the follow automation lowers bathighcap when charging starts, which would
+             otherwise zero the need and flip this sensor straight back off. #}
+          {% set capacity = states('sensor.al2002118050331_installed_capacity') | float(0) %}
+          {# Unknown SOC counts as full: no need in either case, so the
+             recommendation turns off rather than charging blind. #}
+          {% set soc = states('sensor.al2002118050331_instantaneous_battery_soc') | float(100) %}
+          {% set overnight_cap = states('input_number.battery_overnight_charge_cap') | float(50) %}
+          {% set normal_cap = states('input_number.battery_normal_charge_cap') | float(100) %}
+          {% set self_use_need = capacity * (overnight_cap - soc) / 100 %}
+          {% set arbitrage_need = capacity * (normal_cap - soc) / 100 %}
+
+          {# Hysteresis: 0.5 kWh of need to start, but once charging keep going until
+             the target cap is reached. With one threshold the first SOC tick after
+             charging starts drops the need back under 0.5 and stops it again. #}
+          {% set min_need = 0 if this is defined and this.state == 'on' else 0.5 %}
+
+          {% set self_use_case = price < price_threshold and solar_next < solar_threshold_kwh and self_use_need > min_need %}
+          {% set arbitrage_case = margin > arbitrage_buffer and arbitrage_need > min_need %}
+
+          {{ window_active and (self_use_case or arbitrage_case) }}
+
+  # --- Combined grid import meter (everything crossing the meter, as billed) ---
+  - sensor:
+      - name: "Grid import energy"
+        unique_id: grid_import_energy
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: total_increasing
+        icon: mdi:transmission-tower-import
+        availability: >
+          {{ is_number(states('sensor.al2002118050331_grid_to_load'))
+             and is_number(states('sensor.al2002118050331_grid_to_battery')) }}
+        state: >
+          {{ (states('sensor.al2002118050331_grid_to_load') | float
+              + states('sensor.al2002118050331_grid_to_battery') | float) | round(3) }}
+
+  # --- Live prices, battery need, overnight/arbitrage forecast pricing ---
+  - sensor:
+      - name: "Electricity spot price"
+        unique_id: electricity_spot_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:cash-clock
+        availability: "{{ is_number(states('sensor.ros0221_c_kwh_settled_price')) }}"
+        state: >
+          {% set src = 'sensor.ros0221_c_kwh_settled_price' %}
+          {% set v = states(src) | float(0) %}
+          {% set u = (state_attr(src, 'unit_of_measurement') or '') | lower %}
+
+          {% if 'mwh' in u %}
+            {{ (v / 1000) | round(5) }}
+          {% elif u.startswith('c') %}
+            {{ (v / 100) | round(5) }}
+          {% else %}
+            {{ v | round(5) }}
+          {% endif %}
+
+      - name: "Electricity import price"
+        unique_id: electricity_import_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-import
+        availability: "{{ is_number(states('sensor.electricity_spot_price')) }}"
+        state: >
+          {% set gst = 1.15 %}
+          {% set loss = 0.0476 %}
+          {% set peak_rate = 0.1504 %}
+          {% set offpeak_rate = 0.0457 %}
+          {% set transmission = 0.0302 %}
+          {% set levy = 0.002 %}
+          {% set spot = states('sensor.electricity_spot_price') | float %}
+          {% set network = peak_rate if is_state('binary_sensor.vector_peak_period', 'on') else offpeak_rate %}
+
+          {{ ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
+
+      - name: "Electricity export price"
+        unique_id: electricity_export_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-export
+        availability: "{{ is_number(states('sensor.electricity_spot_price')) }}"
+        state: >
+          {% set gst = 1.15 %}
+          {% set peak_credit = 0.0524 %}
+          {% set spot = states('sensor.electricity_spot_price') | float %}
+          {% set credit = peak_credit if is_state('binary_sensor.vector_peak_period', 'on') else 0 %}
+
+          {{ ((spot + credit) * gst) | round(4) }}
+
+      # `electricity_import_price` above (settled) is one trading period behind
+      # real time - correct for cost accounting (matches the bill), wrong for a
+      # live on/off decision. These two mirror it but source from the live
+      # price sensor, which tracks the current period instead of the last
+      # completed one - used for the battery charge/arbitrage decision, not
+      # for costing.
+      - name: "Electricity spot price (live)"
+        unique_id: electricity_spot_price_live
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:cash-clock
+        availability: "{{ is_number(states('sensor.ros0221_c_kwh_live_price')) }}"
+        state: >
+          {% set src = 'sensor.ros0221_c_kwh_live_price' %}
+          {% set v = states(src) | float(0) %}
+          {% set u = (state_attr(src, 'unit_of_measurement') or '') | lower %}
+
+          {% if 'mwh' in u %}
+            {{ (v / 1000) | round(5) }}
+          {% elif u.startswith('c') %}
+            {{ (v / 100) | round(5) }}
+          {% else %}
+            {{ v | round(5) }}
+          {% endif %}
+
+      - name: "Electricity import price (live)"
+        unique_id: electricity_import_price_live
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-import
+        availability: "{{ is_number(states('sensor.electricity_spot_price_live')) }}"
+        state: >
+          {% set gst = 1.15 %}
+          {% set loss = 0.0476 %}
+          {% set peak_rate = 0.1504 %}
+          {% set offpeak_rate = 0.0457 %}
+          {% set transmission = 0.0302 %}
+          {% set levy = 0.002 %}
+          {% set spot = states('sensor.electricity_spot_price_live') | float %}
+          {% set network = peak_rate if is_state('binary_sensor.vector_peak_period', 'on') else offpeak_rate %}
+
+          {{ ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
+
+      - name: "Electricity fixed daily charge"
+        unique_id: electricity_fixed_daily_charge
+        unit_of_measurement: "NZD/day"
+        icon: mdi:calendar-today
+        state: "{{ ((0.90 + 0.35 + 0.15) * 1.15) | round(4) }}"
+
+      - name: "Battery energy needed"
+        unique_id: battery_energy_needed
+        unit_of_measurement: "kWh"
+        state_class: measurement
+        icon: mdi:battery-charging-80
+        state: >
+          {% set capacity = states('sensor.al2002118050331_installed_capacity') | float(0) %}
+          {% set high_cap = states('number.al2002118050331_bathighcap') | float(100) %}
+          {% set soc = states('sensor.al2002118050331_instantaneous_battery_soc') | float(0) %}
+
+          {{ [((capacity * high_cap / 100) - (capacity * soc / 100)), 0] | max | round(2) }}
+
+      # Minimum of the three solar forecasts for the daylight the next (or
+      # current) charge window serves. The window opens after midnight, so
+      # until it ends that is today; from then on it is tomorrow.
+      # Helios numbers its days from today (day_1 = today, day_2 = tomorrow).
+      - name: "Solar forecast next daylight"
+        unique_id: solar_forecast_next_daylight
+        unit_of_measurement: "kWh"
+        icon: mdi:weather-sunny-alert
+        availability: >
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set day = 'today' if now().strftime('%H:%M:%S') < end else 'tomorrow' %}
+          {{ [states('sensor.solcast_pv_forecast_forecast_' ~ day),
+              states('sensor.helios_forecast_energy_day_' ~ ('1' if day == 'today' else '2')),
+              states('sensor.energy_production_' ~ day)] | select('is_number') | list | count > 0 }}
+        attributes:
+          day: >
+            {% set end = states('time.al2002118050331_charge_end_time_1') %}
+            {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+            {{ 'today' if now().strftime('%H:%M:%S') < end else 'tomorrow' }}
+        state: >
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set day = 'today' if now().strftime('%H:%M:%S') < end else 'tomorrow' %}
+          {{ [states('sensor.solcast_pv_forecast_forecast_' ~ day),
+              states('sensor.helios_forecast_energy_day_' ~ ('1' if day == 'today' else '2')),
+              states('sensor.energy_production_' ~ day)] | select('is_number') | map('float') | min | round(2) }}
+
+      - name: "Overnight charge window price"
+        unique_id: overnight_charge_window_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:clock-outline
+        availability: "{{ state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') is not none }}"
+        state: >
+          {% set gst = 1.15 %}
+          {% set loss = 0.0476 %}
+          {% set offpeak_rate = 0.0457 %}
+          {% set transmission = 0.0302 %}
+          {% set levy = 0.002 %}
+          {% set periods = state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] %}
+          {% set start_h = states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) %}
+          {% set end_h = states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) %}
+          {# The next (or current) charge window: today until it ends, tomorrow
+             after - same rule as the forecast peak export price. #}
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set target_date = now().date() if now().strftime('%H:%M:%S') < end else (now() + timedelta(days=1)).date() %}
+          {% set ns = namespace(total=0, count=0) %}
+
+          {% for p in periods %}
+            {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
+            {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
+              {% set spot = p.price / 100 %}
+              {% set landed = (spot * (1 + loss) + offpeak_rate + transmission + levy) * gst %}
+              {% set ns.total = ns.total + landed %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endfor %}
+          {# No periods means the day isn't published yet: unknown, not $0. #}
+          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else none }}
+
+      - name: "Forecast peak export price"
+        unique_id: forecast_peak_export_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-export
+        availability: "{{ state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') is not none }}"
+        state: >
+          {% set gst = 1.15 %}
+          {% set peak_credit = 0.0524 %}
+          {% set periods = state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] %}
+          {# The peak the next (or current) charge window serves: today until
+             the window ends, tomorrow after - so 23:56 snapshots tomorrow's. #}
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set target_date = now().date() if now().strftime('%H:%M:%S') < end else (now() + timedelta(days=1)).date() %}
+          {% set target_month = target_date.month %}
+
+          {% if target_month in [5, 9] %}
+            {% set windows = [(17, 22)] %}
+          {% elif target_month in [6, 7, 8] %}
+            {% set windows = [(7, 11), (17, 22)] %}
+          {% else %}
+            {% set windows = [] %}
+          {% endif %}
+          {% set ns = namespace(total=0, count=0) %}
+          {% for p in periods %}
+            {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
+            {% if dt and dt.date() == target_date %}
+              {% for w in windows %}
+                {% if w[0] <= dt.hour < w[1] %}
+                  {% set spot = p.price / 100 %}
+                  {% set landed = (spot + peak_credit) * gst %}
+                  {% set ns.total = ns.total + landed %}
+                  {% set ns.count = ns.count + 1 %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+          {# No peak periods (Oct-Apr, or the day isn't published yet) means no
+             forecast, not a 0 price: 0 would turn a negative live import price
+             into a positive arbitrage margin. Unknown makes the margin sensor
+             unavailable, which turns the arbitrage path off. #}
+          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else none }}
+
+      - name: "Battery arbitrage margin"
+        unique_id: battery_arbitrage_margin
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:swap-horizontal
+        availability: >
+          {{ is_number(states('sensor.forecast_peak_export_price'))
+             and is_number(states('sensor.electricity_import_price_live')) }}
+        state: >
+          {% set export_price = states('sensor.forecast_peak_export_price') | float(0) %}
+          {% set charge_price = states('sensor.electricity_import_price_live') | float(999) %}
+          {% set eff = states('input_number.battery_round_trip_efficiency') | float(90) / 100 %}
+
+          {{ ((export_price * eff) - charge_price) | round(4) }}
+
+  # --- Charge-window active flag, re-evaluated every 5 min so it flips on time at the boundary ---
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+    binary_sensor:
+      - name: "Battery charge window active"
+        unique_id: battery_charge_window_active
+        icon: mdi:clock-check-outline
+        state: >
+          {% set start_h = states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) %}
+          {% set end_h = states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) %}
+          {% set h = now().hour %}
+
+          {% if start_h <= end_h %}
+            {{ start_h <= h < end_h }}
+          {% else %}
+            {{ h >= start_h or h < end_h }}
+          {% endif %}
+
+  # --- Cost / earnings accumulators (price at time of each kWh increment) ---
+  - triggers:
+      - trigger: state
+        entity_id: sensor.grid_import_energy
+    sensor:
+      - name: "Electricity import cost total"
+        unique_id: electricity_import_cost_total
+        unit_of_measurement: "NZD"
+        device_class: monetary
+        state_class: total
+        # last_reading is the last numeric source value. It's restored across
+        # HA restarts, so usage during a source outage still counts on
+        # recovery, when from_state is unavailable.
+        attributes:
+          last_reading: >
+            {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
+            {{ new if new is not none else this.attributes.get('last_reading') }}
+        state: >
+          {% set last = this.attributes.get('last_reading') | float(none) %}
+          {% set old = trigger.from_state.state | float(none) if trigger.from_state else none %}
+          {% set old = last if last is not none else old %}
+          {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
+          {% set prev = this.state | float(0) %}
+
+          {% if old is none or new is none or new < old %}
+            {{ prev }}
+          {% else %}
+            {{ (prev + (new - old) * states('sensor.electricity_import_price') | float(0)) | round(4) }}
+          {% endif %}
+
+  - triggers:
+      - trigger: state
+        entity_id: sensor.al2002118050331_solar_to_grid
+    sensor:
+      - name: "Electricity export earnings total"
+        unique_id: electricity_export_earnings_total
+        unit_of_measurement: "NZD"
+        device_class: monetary
+        state_class: total
+        # last_reading: see the import cost total above.
+        attributes:
+          last_reading: >
+            {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
+            {{ new if new is not none else this.attributes.get('last_reading') }}
+        state: >
+          {% set last = this.attributes.get('last_reading') | float(none) %}
+          {% set old = trigger.from_state.state | float(none) if trigger.from_state else none %}
+          {% set old = last if last is not none else old %}
+          {% set new = trigger.to_state.state | float(none) if trigger.to_state else none %}
+          {% set prev = this.state | float(0) %}
+
+          {% if old is none or new is none or new < old %}
+            {{ prev }}
+          {% else %}
+            {{ (prev + (new - old) * states('sensor.electricity_export_price') | float(0)) | round(4) }}
+          {% endif %}
+
+  # --- Nightly accuracy: solar forecasts + price forecasts, snapshot vs actual ---
+  - triggers:
+      - trigger: time
+        at: "23:55:00"
+    sensor:
+      - name: "Solcast forecast accuracy"
+        unique_id: solcast_forecast_accuracy
+        unit_of_measurement: "%"
+        icon: mdi:target
+        attributes:
+          forecast_kwh: "{{ states('input_number.solcast_forecast_snapshot') | float(0) }}"
+          actual_kwh: "{{ states('sensor.al2002118050331_daily_pv_generation') | float(0) }}"
+        state: >
+          {% set forecast = states('input_number.solcast_forecast_snapshot') | float(0) %}
+          {% set actual = states('sensor.al2002118050331_daily_pv_generation') | float(0) %}
+
+          {{ ((actual - forecast) / forecast * 100) | round(1) if forecast > 0 else 0 }}
+
+      - name: "Helios forecast accuracy"
+        unique_id: helios_forecast_accuracy
+        unit_of_measurement: "%"
+        icon: mdi:target
+        attributes:
+          forecast_kwh: "{{ states('input_number.helios_forecast_snapshot') | float(0) }}"
+          actual_kwh: "{{ states('sensor.al2002118050331_daily_pv_generation') | float(0) }}"
+        state: >
+          {% set forecast = states('input_number.helios_forecast_snapshot') | float(0) %}
+          {% set actual = states('sensor.al2002118050331_daily_pv_generation') | float(0) %}
+
+          {{ ((actual - forecast) / forecast * 100) | round(1) if forecast > 0 else 0 }}
+
+      - name: "Forecast.Solar accuracy"
+        unique_id: forecast_solar_accuracy
+        unit_of_measurement: "%"
+        icon: mdi:target
+        attributes:
+          forecast_kwh: "{{ states('input_number.forecast_solar_snapshot') | float(0) }}"
+          actual_kwh: "{{ states('sensor.al2002118050331_daily_pv_generation') | float(0) }}"
+        state: >
+          {% set forecast = states('input_number.forecast_solar_snapshot') | float(0) %}
+          {% set actual = states('sensor.al2002118050331_daily_pv_generation') | float(0) %}
+
+          {{ ((actual - forecast) / forecast * 100) | round(1) if forecast > 0 else 0 }}
+
+      - name: "Actual overnight window price"
+        unique_id: actual_overnight_window_price
+        unit_of_measurement: "NZD/kWh"
+        icon: mdi:chart-line
+        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none }}"
+        state: >
+          {% set gst = 1.15 %}
+          {% set loss = 0.0476 %}
+          {% set offpeak_rate = 0.0457 %}
+          {% set transmission = 0.0302 %}
+          {% set levy = 0.002 %}
+          {% set periods = state_attr('sensor.ros0221_c_kwh_settled_price', 'history') or [] %}
+          {% set start_h = states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) %}
+          {% set end_h = states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) %}
+          {% set target_date = now().date() %}
+          {% set ns = namespace(total=0, count=0) %}
+
+          {% for p in periods %}
+            {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
+            {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
+              {% set spot = p.price / 100 %}
+              {% set landed = (spot * (1 + loss) + offpeak_rate + transmission + levy) * gst %}
+              {% set ns.total = ns.total + landed %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endfor %}
+          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else 0 }}
+
+      - name: "Actual peak export window price"
+        unique_id: actual_peak_export_window_price
+        unit_of_measurement: "NZD/kWh"
+        icon: mdi:chart-line
+        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none }}"
+        state: >
+          {% set gst = 1.15 %}
+          {% set peak_credit = 0.0524 %}
+          {% set periods = state_attr('sensor.ros0221_c_kwh_settled_price', 'history') or [] %}
+          {% set target_date = now().date() %}
+          {% set target_month = target_date.month %}
+
+          {% if target_month in [5, 9] %}
+            {% set windows = [(17, 22)] %}
+          {% elif target_month in [6, 7, 8] %}
+            {% set windows = [(7, 11), (17, 22)] %}
+          {% else %}
+            {% set windows = [] %}
+          {% endif %}
+          {% set ns = namespace(total=0, count=0) %}
+          {% for p in periods %}
+            {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
+            {% if dt and dt.date() == target_date %}
+              {% for w in windows %}
+                {% if w[0] <= dt.hour < w[1] %}
+                  {% set spot = p.price / 100 %}
+                  {% set landed = (spot + peak_credit) * gst %}
+                  {% set ns.total = ns.total + landed %}
+                  {% set ns.count = ns.count + 1 %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else 0 }}
+
+      - name: "Overnight price forecast accuracy"
+        unique_id: overnight_price_forecast_accuracy
+        unit_of_measurement: "NZD/kWh"
+        icon: mdi:target
+        # The 23:56 snapshot is skipped when the forecast wasn't published,
+        # so a snapshot older than a day belongs to an earlier window.
+        availability: >
+          {{ states.input_number.overnight_price_forecast_snapshot is not none
+             and now() - states.input_number.overnight_price_forecast_snapshot.last_updated < timedelta(hours=24) }}
+        attributes:
+          forecast: "{{ states('input_number.overnight_price_forecast_snapshot') | float(0) }}"
+          actual: "{{ states('sensor.actual_overnight_window_price') | float(0) }}"
+        state: >
+          {% set forecast = states('input_number.overnight_price_forecast_snapshot') | float(0) %}
+          {% set actual = states('sensor.actual_overnight_window_price') | float(0) %}
+
+          {{ (actual - forecast) | round(4) }}
+
+      - name: "Peak export price forecast accuracy"
+        unique_id: peak_export_price_forecast_accuracy
+        unit_of_measurement: "NZD/kWh"
+        icon: mdi:target
+        attributes:
+          forecast: "{{ states('input_number.peak_export_price_forecast_snapshot') | float(0) }}"
+          actual: "{{ states('sensor.actual_peak_export_window_price') | float(0) }}"
+        state: >
+          {% set forecast = states('input_number.peak_export_price_forecast_snapshot') | float(0) %}
+          {% set actual = states('sensor.actual_peak_export_window_price') | float(0) %}
+
+          {{ (actual - forecast) | round(4) }}
+
+utility_meter:
+  # Billing-cycle kWh split by Vector peak/off-peak (matches bill lines)
+  grid_import_billing:
+    source: sensor.grid_import_energy
+    cycle: monthly
+    # offset: {days: 14}   # uncomment if your bill doesn't start on the 1st (14 = 15th)
+    tariffs: [peak, offpeak]
+  grid_export_billing:
+    source: sensor.al2002118050331_solar_to_grid
+    cycle: monthly
+    # offset: {days: 14}
+    tariffs: [peak, offpeak]
+
+  # Daily kWh totals
+  grid_import_daily:
+    source: sensor.grid_import_energy
+    cycle: daily
+  grid_export_daily:
+    source: sensor.al2002118050331_solar_to_grid
+    cycle: daily
+
+  # Cost / earnings. The totals drop when a price is negative, so count
+  # decreases as credits (net_consumption) rather than as a source reset.
+  grid_import_cost_daily:
+    source: sensor.electricity_import_cost_total
+    cycle: daily
+    net_consumption: true
+    periodically_resetting: false
+  grid_import_cost_billing:
+    source: sensor.electricity_import_cost_total
+    cycle: monthly
+    net_consumption: true
+    periodically_resetting: false
+  grid_export_earnings_daily:
+    source: sensor.electricity_export_earnings_total
+    cycle: daily
+    net_consumption: true
+    periodically_resetting: false
+  grid_export_earnings_billing:
+    source: sensor.electricity_export_earnings_total
+    cycle: monthly
+    net_consumption: true
+    periodically_resetting: false
+
+automation:
+  - alias: "Utility meter tariff follows Vector peak"
+    id: utility_meter_tariff_follows_vector_peak
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.vector_peak_period
+      - trigger: homeassistant
+        event: start
+    actions:
+      - action: select.select_option
+        target:
+          entity_id:
+            - select.grid_import_billing
+            - select.grid_export_billing
+        data:
+          option: "{{ 'peak' if is_state('binary_sensor.vector_peak_period', 'on') else 'offpeak' }}"
+
+  - alias: "Snapshot tomorrow's forecasts"
+    id: snapshot_tomorrow_solar_forecasts
+    triggers:
+      - trigger: time
+        at: "23:56:00"
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.solcast_forecast_snapshot
+        data:
+          value: "{{ states('sensor.solcast_pv_forecast_forecast_tomorrow') | float(0) }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.helios_forecast_snapshot
+        data:
+          value: "{{ states('sensor.helios_forecast_energy_day_2') | float(0) }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.forecast_solar_snapshot
+        data:
+          value: "{{ states('sensor.energy_production_tomorrow') | float(0) }}"
+      # Skip rather than record 0 when tomorrow's forecast isn't out yet;
+      # the accuracy sensor then goes unavailable for that day.
+      - if:
+          - condition: template
+            value_template: "{{ is_number(states('sensor.overnight_charge_window_price')) }}"
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.overnight_price_forecast_snapshot
+            data:
+              value: "{{ states('sensor.overnight_charge_window_price') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.peak_export_price_forecast_snapshot
+        data:
+          value: "{{ states('sensor.forecast_peak_export_price') | float(0) }}"
+
+  - alias: "Battery grid charge - follow recommendation"
+    id: battery_grid_charge_follow_recommendation
+    # Queued, not the default single: a state change that arrives while a
+    # previous run is still waiting on the inverter must not be dropped, or the
+    # switch can be left on after the recommendation turns off.
+    mode: queued
+    triggers:
+      # `to: ~` = real state changes only. Without it the trigger also fires on
+      # every attribute change (price, forecasts - every few minutes all day),
+      # re-sending the inverter config each time.
+      - trigger: state
+        entity_id: binary_sensor.battery_grid_charge_recommended
+        to: ~
+      - trigger: homeassistant
+        event: start
+        id: start
+      # The startup wait gives up after 10 min, so also sync when the cloud
+      # switch comes back later. Only from unavailable/unknown, so this
+      # automation's own on/off writes don't retrigger it.
+      - trigger: state
+        entity_id: switch.al2002118050331_grid_charge_enabled
+        from: ["unavailable", "unknown"]
+        to: ["on", "off"]
+        id: switch_recovered
+    conditions:
+      # After a switch recovery, only write if it disagrees with the
+      # recommendation - the cloud drops out often enough that re-sending
+      # the config on every recovery would be noise.
+      - condition: template
+        value_template: >-
+          {{ trigger.id != 'switch_recovered'
+             or states('switch.al2002118050331_grid_charge_enabled')
+                != states('binary_sensor.battery_grid_charge_recommended') }}
+    actions:
+      # At startup the recommendation can still be unknown and the Alpha ESS
+      # (cloud) switch unavailable - neither branch would match, or turn_off
+      # would hit an entity that isn't loaded yet. Wait for both to settle.
+      - if:
+          - condition: trigger
+            id: start
+        then:
+          - wait_template: >-
+              {{ states('binary_sensor.battery_grid_charge_recommended') in ['on', 'off']
+                 and states('switch.al2002118050331_grid_charge_enabled') in ['on', 'off'] }}
+            timeout: "00:10:00"
+            continue_on_timeout: false
+      # Write order matters: cap first, switch last, in both branches. The
+      # Alpha ESS integration sends the whole charge config on every write,
+      # filling the field it isn't changing from its last poll. A cap write
+      # refreshes that poll afterwards, a switch write doesn't - so a cap write
+      # straight after a switch write re-sends the old switch state and undoes
+      # it.
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.battery_grid_charge_recommended
+                state: "on"
+            sequence:
+              - action: number.set_value
+                target:
+                  entity_id: number.al2002118050331_bathighcap
+                data:
+                  value: >-
+                    {% if state_attr('binary_sensor.battery_grid_charge_recommended', 'arbitrage_triggered') %}
+                      {{ states('input_number.battery_normal_charge_cap') | float(100) }}
+                    {% else %}
+                      {{ states('input_number.battery_overnight_charge_cap') | float(50) }}
+                    {% endif %}
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.al2002118050331_grid_charge_enabled
+              - action: notify.dan_signal
+                data:
+                  title: Battery Charging Started
+                  message: >-
+                    Live price: ${{ states('sensor.electricity_import_price_live') }}/kWh - Solar forecast: {{ state_attr('binary_sensor.battery_grid_charge_recommended', 'solar_forecast_used_kwh') }} kWh - Arbitrage margin: ${{ state_attr('binary_sensor.battery_grid_charge_recommended', 'arbitrage_margin') }}/kWh - Charging enabled
+                enabled: false
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.battery_grid_charge_recommended
+                state: "off"
+            sequence:
+              # continue_on_error so a failed cap restore can't stop the
+              # switch from being turned off.
+              - action: number.set_value
+                continue_on_error: true
+                target:
+                  entity_id: number.al2002118050331_bathighcap
+                data:
+                  value: "{{ states('input_number.battery_normal_charge_cap') | float(100) }}"
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.al2002118050331_grid_charge_enabled
+              - action: notify.dan_signal
+                data:
+                  title: Battery Charging Stopped
+                  message: "Recommendation ended - charging disabled"
+                enabled: false
+
+  - alias: "Battery charge cap - daily backstop restore"
+    id: battery_charge_cap_daily_backstop
+    description: >-
+      Force-restores the normal charge cap every morning, and turns grid
+      charging off if the charge window has closed, regardless of
+      automation/switch state - in case the follow-recommendation automation
+      failed mid-window (crash, network blip, dropped trigger).
+    triggers:
+      - trigger: time
+        at: "08:00:00"
+    # Cap first, switch last (see the write-order note on the follow
+    # automation), and continue_on_error on both, so a failed inverter call
+    # for one doesn't stop the other from being attempted.
+    actions:
+      - action: number.set_value
+        continue_on_error: true
+        target:
+          entity_id: number.al2002118050331_bathighcap
+        data:
+          value: "{{ states('input_number.battery_normal_charge_cap') | float(100) }}"
+      - if:
+          - condition: state
+            entity_id: binary_sensor.battery_charge_window_active
+            state: "off"
+        then:
+          - action: switch.turn_off
+            continue_on_error: true
+            target:
+              entity_id: switch.al2002118050331_grid_charge_enabled

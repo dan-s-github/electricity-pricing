@@ -98,6 +98,19 @@ Export is a single sensor (`solar_to_grid`), no summing needed. A possible
 wired in — not currently in the Energy dashboard config, so left out
 deliberately; revisit if the battery ever exports.
 
+Export now also goes through a wrapper, `sensor.grid_export_energy`, and
+both wrappers guard against a frozen integration. On 2026-10-19 the
+Alpha ESS integration stopped refreshing from 17:21 the day before until
+17:34. `solar_to_grid` kept yesterday's 19.2 kWh past midnight, then
+dropped straight to today's 14.4. Utility meters treat a drop as a reset
+and add nothing, so the day's export was lost from the daily, billing and
+earnings totals (the billing meters were recalibrated by hand). The
+wrappers now count a reading as 0 unless `daily_energy_date` is today and
+the source has updated since midnight. A frozen day then reads 0 and the
+recovery reads as a normal increase from 0. If the date sensor itself is
+unavailable, the wrappers go unavailable rather than 0, so a short outage
+during the day can't add the whole day's total again on recovery.
+
 ## Battery grid-charge advisory
 
 Goal (per Dan, verbatim intent): **minimize energy costs** — not just "avoid

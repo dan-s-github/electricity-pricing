@@ -165,7 +165,11 @@ template:
 
           {{ window_active and (self_use_case or arbitrage_case) }}
 
-  # --- Combined grid import meter (everything crossing the meter, as billed) ---
+  # --- Grid import/export meters (everything crossing the meter, as billed) ---
+  # The Alpha ESS daily counters can freeze across midnight, then jump from
+  # yesterday's total down to today's. Meters ignore that drop and lose the
+  # day, so a reading not refreshed since midnight, or not dated today,
+  # counts as 0; recovery then reads as an ordinary increase.
   - sensor:
       - name: "Grid import energy"
         unique_id: grid_import_energy
@@ -175,10 +179,31 @@ template:
         icon: mdi:transmission-tower-import
         availability: >
           {{ is_number(states('sensor.al2002118050331_grid_to_load'))
-             and is_number(states('sensor.al2002118050331_grid_to_battery')) }}
+             and is_number(states('sensor.al2002118050331_grid_to_battery'))
+             and as_datetime(states('sensor.al2002118050331_daily_energy_date')) is not none }}
         state: >
-          {{ (states('sensor.al2002118050331_grid_to_load') | float
-              + states('sensor.al2002118050331_grid_to_battery') | float) | round(3) }}
+          {% set dated_today = states('sensor.al2002118050331_daily_energy_date') == now().date() | string %}
+          {% set ns = namespace(total=0) %}
+          {% for s in [states.sensor.al2002118050331_grid_to_load, states.sensor.al2002118050331_grid_to_battery] %}
+            {% if dated_today and s.last_updated >= today_at() %}
+              {% set ns.total = ns.total + s.state | float %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.total | round(3) }}
+
+      - name: "Grid export energy"
+        unique_id: grid_export_energy
+        unit_of_measurement: "kWh"
+        device_class: energy
+        state_class: total_increasing
+        icon: mdi:transmission-tower-export
+        availability: >
+          {{ is_number(states('sensor.al2002118050331_solar_to_grid'))
+             and as_datetime(states('sensor.al2002118050331_daily_energy_date')) is not none }}
+        state: >
+          {% set s = states.sensor.al2002118050331_solar_to_grid %}
+          {% set dated_today = states('sensor.al2002118050331_daily_energy_date') == now().date() | string %}
+          {{ s.state | float | round(3) if dated_today and s.last_updated >= today_at() else 0 }}
 
   # --- Live prices, battery need, overnight/arbitrage forecast pricing ---
   - sensor:
@@ -468,7 +493,7 @@ template:
 
   - triggers:
       - trigger: state
-        entity_id: sensor.al2002118050331_solar_to_grid
+        entity_id: sensor.grid_export_energy
     sensor:
       - name: "Electricity export earnings total"
         unique_id: electricity_export_earnings_total
@@ -641,7 +666,7 @@ utility_meter:
     # offset: {days: 14}   # uncomment if your bill doesn't start on the 1st (14 = 15th)
     tariffs: [peak, offpeak]
   grid_export_billing:
-    source: sensor.al2002118050331_solar_to_grid
+    source: sensor.grid_export_energy
     cycle: monthly
     # offset: {days: 14}
     tariffs: [peak, offpeak]
@@ -651,7 +676,7 @@ utility_meter:
     source: sensor.grid_import_energy
     cycle: daily
   grid_export_daily:
-    source: sensor.al2002118050331_solar_to_grid
+    source: sensor.grid_export_energy
     cycle: daily
 
   # Cost / earnings. The totals drop when a price is negative, so count

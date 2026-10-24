@@ -1,8 +1,11 @@
 """Build EMHASS optimisers from the repo's emhass/config.json, as the add-on does."""
 import asyncio
 import copy
+import json
 import logging
 import pathlib
+import subprocess
+import time
 
 import emhass
 import pandas as pd
@@ -13,6 +16,10 @@ PKG = pathlib.Path(emhass.__file__).parent
 HERE = pathlib.Path(__file__).parent
 REPO_CONFIG = HERE.parent.parent / "emhass" / "config.json"
 TZ = "Pacific/Auckland"
+REPO_CONF = json.loads(REPO_CONFIG.read_text())
+# Reached over SSH from the HA host, which is on the add-on's network
+ADDON_URL = "http://5b918bf2-emhass:5000"
+ADDON_CONFIG = "/addon_configs/5b918bf2_emhass/config.json"
 
 logger = logging.getLogger("backtest")
 logger.setLevel(logging.ERROR)
@@ -61,3 +68,37 @@ def plan(overrides, index, load_cost, prod_price, pv, load, soc_init, soc_final=
     opt = _optimiser(overrides, len(index))
     return opt.perform_naive_mpc_optim(df, pd.Series(pv, index=index), pd.Series(load, index=index),
                                        len(index), soc_init, soc_final)
+
+
+def _ssh(host, remote, stdin=b""):
+    return subprocess.run(["ssh", "-o", "BatchMode=yes", host, remote], input=stdin,
+                          capture_output=True, check=True).stdout
+
+
+def addon_config(host):
+    """The add-on's deployed config.json."""
+    return json.loads(_ssh(host, f"cat {ADDON_CONFIG}"))
+
+
+def dry_run(host, load_cost, prod_price, pv, load, soc_init, soc_final=0.12):
+    """The same solve as plan(), done by the add-on's dry-run endpoint (EMHASS >= 0.18.7).
+
+    Forecasts go as lists, which EMHASS lays onto its own grid from now on, so
+    past periods can be replayed. The add-on runs one dry run at a time and
+    answers 429 to the rest, so retry those.
+    """
+    body = json.dumps({"prediction_horizon": len(load_cost), "soc_init": soc_init, "soc_final": soc_final,
+                       "load_cost_forecast": list(map(float, load_cost)),
+                       "prod_price_forecast": list(map(float, prod_price)),
+                       "pv_power_forecast": list(map(float, pv)),
+                       "load_power_forecast": list(map(float, load))}).encode()
+    remote = (f"curl -s -X POST -H 'Content-Type: application/json' --data-binary @- "
+              f"{ADDON_URL}/api/v1/dry-run/naive-mpc-optim")
+    for _ in range(10):
+        res = json.loads(_ssh(host, remote, body))
+        if res.get("status") != "not-run" or "another" not in " ".join(res.get("errors", [])).lower():
+            break
+        time.sleep(2)
+    if res.get("status") != "ok":
+        raise RuntimeError(f"Dry run {res.get('status')}: {res.get('errors') or res.get('error_message')}")
+    return pd.DataFrame(res["plan"])

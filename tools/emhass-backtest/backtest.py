@@ -6,6 +6,7 @@ SOC). The mode is applied to the period's *actual* load and PV, and the grid
 flow is costed at the settled price.
 
 Usage: python backtest.py [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--only a,b]
+       python backtest.py --check-addon N [--host homeassistant.local]
 """
 import argparse
 import pickle
@@ -104,31 +105,82 @@ def apply(mode, power, soc, load, pv):
     return b, soc
 
 
-def emhass_mode(overrides, t, a, soc, scenario):
-    """Plan like the :01/:31 automation and turn the first step into a mode."""
-    import engine
-
+def emhass_inputs(t, a, scenario):
+    """The automation's EMHASS inputs at t: index, import and export prices, PV and load."""
     i = snap_ts.searchsorted(t + pd.Timedelta("90s"), side="right") - 1
     fc = snaps[i][1] if i >= 0 else {}
     fut = sorted(k for k in fc if k > t)[:47]
     if len(fut) < 5 or np.isnan(a.spot_live):
-        return "self_use", 0.0, True  # the automation's condition would skip this run
+        return None  # the automation's condition would skip this run
     idx = pd.DatetimeIndex([t] + fut)
     spots = np.array([a.spot_live] + [fc[k] for k in fut])
     lc = np.array([imp_price(s, k, scenario) for s, k in zip(spots, idx)])
     pp = np.array([exp_price(s, k, scenario) for s, k in zip(spots, idx)])
     pv_fc = pv_forecast(t, idx)
     ld_fc = per.load.reindex(idx - pd.Timedelta("1D")).ffill().bfill().to_numpy()  # naive
-    res = engine.plan(overrides, idx, lc, pp, pv_fc, ld_fc, soc)
-    b, g = float(res.P_batt.iloc[0]), float(res.P_grid.iloc[0])
-    net_fc = ld_fc[0] - pv_fc[0]
+    return idx, lc, pp, pv_fc, ld_fc
+
+
+def plan_mode(b, g, net_fc):
+    """A plan's first step (battery and grid W) as a mode and its power."""
     if b < -50 and g > 50:
-        return "grid_charge", -b, False
+        return "grid_charge", -b
     if b > 50 and b > net_fc + 50 and g < -50:
-        return "discharge", b, False
+        return "discharge", b
     if abs(b) <= 50 and net_fc > 50:
-        return "hold", 0.0, False
-    return "self_use", 0.0, False
+        return "hold", 0.0
+    return "self_use", 0.0
+
+
+def emhass_mode(overrides, t, a, soc, scenario):
+    """Plan like the :01/:31 automation and turn the first step into a mode."""
+    import engine
+
+    inputs = emhass_inputs(t, a, scenario)
+    if inputs is None:
+        return "self_use", 0.0, True
+    idx, lc, pp, pv_fc, ld_fc = inputs
+    res = engine.plan(overrides, idx, lc, pp, pv_fc, ld_fc, soc)
+    mode, power = plan_mode(float(res.P_batt.iloc[0]), float(res.P_grid.iloc[0]), ld_fc[0] - pv_fc[0])
+    return mode, power, False
+
+
+def check_addon(n, host, start, end):
+    """Solve n sample half-hours locally and with the add-on's dry run, and compare.
+
+    Uses the deployed config (no overrides), the recorded SOC and the actual
+    tariff. A mismatch means the local EMHASS has drifted from the add-on:
+    version, config or defaults.
+    """
+    import engine
+
+    live = engine.addon_config(host)
+    drift = sorted(k for k in live.keys() | engine.REPO_CONF.keys() if live.get(k) != engine.REPO_CONF.get(k))
+    print(f"Add-on config vs emhass/config.json: {', '.join(drift) if drift else 'identical'}")
+
+    times = [t for t in pd.date_range(start, end, freq="30min", inclusive="left")
+             if not np.isnan(per.soc[t]) and emhass_inputs(t, per.loc[t], "actual") is not None]
+    times = [times[i] for i in np.linspace(0, len(times) - 1, min(n, len(times))).astype(int)]
+    rows = []
+    for t in times:
+        idx, lc, pp, pv_fc, ld_fc = emhass_inputs(t, per.loc[t], "actual")
+        soc = per.soc[t] / 100
+        local = engine.plan({}, idx, lc, pp, pv_fc, ld_fc, soc)
+        addon = engine.dry_run(host, lc, pp, pv_fc, ld_fc, soc)
+        lb, ab = local.P_batt.to_numpy(), addon.P_batt.to_numpy()
+        net_fc = ld_fc[0] - pv_fc[0]
+        rows.append({"t": t, "local mode": plan_mode(lb[0], float(local.P_grid.iloc[0]), net_fc)[0],
+                     "add-on mode": plan_mode(ab[0], float(addon.P_grid.iloc[0]), net_fc)[0],
+                     "local P_batt[0]": lb[0], "add-on P_batt[0]": ab[0],
+                     "max |dP_batt|": np.abs(lb - ab).max(),
+                     "local $": local.cost_profit.sum(), "add-on $": addon.cost_profit.sum(),
+                     "add-on status": addon.optim_status.iloc[0]})
+    df = pd.DataFrame(rows).set_index("t")
+    pd.set_option("display.width", 200)
+    print(df.round(3).to_string())
+    same = (df["local mode"] == df["add-on mode"]).sum()
+    worst = (df["local $"] - df["add-on $"]).abs().max()
+    print(f"\n{same}/{len(df)} first-step modes match; worst plan value difference ${worst:.4f}")
 
 
 def peak_export_forecast(t, scenario):
@@ -218,6 +270,9 @@ def main():
     ap.add_argument("--start", help="first day (default: first full day with a day of load history before it)")
     ap.add_argument("--end", help="day after the last day (default: last midnight in the data)")
     ap.add_argument("--only", help="comma-separated strategies to run")
+    ap.add_argument("--check-addon", type=int, metavar="N",
+                    help="instead of a backtest, compare N sample solves with the add-on's dry run")
+    ap.add_argument("--host", default="homeassistant.local", help="SSH host for --check-addon")
     args = ap.parse_args()
 
     valid = per.dropna(subset=["load", "pv", "batt", "grid", "soc", "spot"]).index
@@ -226,6 +281,8 @@ def main():
     gaps = per.loc[start:end - pd.Timedelta("1min"), ["load", "pv", "batt", "grid", "spot"]].isna().sum()
     if gaps.any():
         raise SystemExit(f"Missing data in range, pick other dates: {gaps[gaps > 0].to_dict()}")
+    if args.check_addon:
+        return check_addon(args.check_addon, args.host, start, end)
 
     strategies = args.only.split(",") if args.only else BASELINES + list(EMHASS)
     print(f"Replaying {start:%Y-%m-%d} to {end:%Y-%m-%d} ({(end - start).days} days)")

@@ -57,6 +57,24 @@ uv run backtest.py   # or --start 2026-07-01 --end 2026-07-15 --only self_use,em
 
 `uv run` creates the environment from `pyproject.toml` and `uv.lock` on first use. To match a
 new add-on version, change the `emhass` pin in `pyproject.toml` and run `uv lock`.
+
+### Checking against the add-on
+
+The backtest runs EMHASS as a local library, not through the add-on, so it
+can drift from production (version, config, defaults). To check:
+
+```sh
+uv run backtest.py --check-addon 12 --start 2026-10-05 --end 2026-10-13
+```
+
+This compares `emhass/config.json` with the add-on's deployed config, then
+solves 12 evenly spaced half-hours both locally and with the add-on's
+dry-run endpoint (`/api/v1/dry-run/naive-mpc-optim`, EMHASS 0.18.7+), using
+the recorded SOC, the deployed config and the actual tariff. The add-on gets
+there over SSH (`--host`, default `homeassistant.local`). A dry run writes
+nothing on the add-on: no sensors, no plan, no caches. Modes and plan values
+should match exactly; any difference means it has drifted. Only one dry run
+runs at a time, so this is a check, not a way to run the backtest.
 The full set takes about 40 s for 9 days, several minutes for two months.
 
 Gaps are filled where the data allows: before 23 Sep there's no live price,
@@ -84,3 +102,4 @@ so the current period uses the settled price; before 5 Oct
 | 2026-10-14 | 5-13 Oct | Reward factor 0 and 0.3 equal; 0.9 $0.17 worse (winter tariff $0.46). EMHASS ~$0.40 better than the automation. Battery export lost money; with winter tariff ~break-even after wear. 0.3 deployed. |
 | 2026-10-14 | 5-13 Oct | Rule without the 00:00-04:00 gate: $0.25 better from two extra charges (12 Oct 04:00, 13 Oct 10:30). EMHASS still $0.17 better than ungated. |
 | 2026-10-14 | 10 Aug-13 Oct (Influx, real Helios curves, calibrated battery) | Automation $35.68 (actual $36.01), rule gated $34.59, ungated $35.02: keep the gate. EMHASS factor 0.3 $27.23, 0 $27.32, 0.9 $27.65: ~$8.50 (≈$4/month) better than the automation. Measured efficiencies in the EMHASS config made it worse ($27.84). Battery export $12.55 end-adjusted: $14.70 better than no export, for 237 kWh more throughput, so it only pays if wear costs under ~6c/kWh. |
+| 2026-10-25 | 5-13 Oct, `--check-addon 12` | EMHASS 0.18.7 locally and on the add-on: 12/12 first-step modes and plan values identical, config identical. |

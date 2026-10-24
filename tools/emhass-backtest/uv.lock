@@ -316,7 +316,7 @@ wheels = [
 
 [[package]]
 name = "emhass"
-version = "0.18.5"
+version = "0.18.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -344,9 +344,9 @@ dependencies = [
     { name = "waitress" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/48/99/b4dc161999e0b3f7edbb9733c7d3df9020147c77326f6d7a4fce03608cd6/emhass-0.18.5.tar.gz", hash = "sha256:b7c251c12c5036a082b465c53f332c235da28eb52bb271af2d8e99604b8369b2", size = 2528373, upload-time = "2026-10-09T19:55:08.176Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/92/c5/c15b6705acf59480eba3810f089e43210e07411cc5959316b6620d0efc4f/emhass-0.18.7.tar.gz", hash = "sha256:0aae4d072527a869f78af4c2b704864148fd5dc4833b8489c1c5378396fdc9fe", size = 2572359, upload-time = "2026-10-23T08:56:21.788Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/80/fc0c5cc59a7c73078141194149fac87f29e02165974ca62ca715be371fb3/emhass-0.18.5-py3-none-any.whl", hash = "sha256:62c1d3483ac4065b4463d76a7ed984771fde754be1aa671aae4c6f91e9abe4d0", size = 2540474, upload-time = "2026-10-09T19:55:05.793Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/82/3b3fc42db958d1ad4a707e82ebe4c227e5b787e4cccbed08c3e179c5b567/emhass-0.18.7-py3-none-any.whl", hash = "sha256:ba80fd7ccaef7fe34344ae93155591ad2032bbbe50fa2b07ebe5b1aa6d9fc6d6", size = 2584278, upload-time = "2026-10-23T08:56:19.667Z" },
 ]
 
 [[package]]
@@ -358,7 +358,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "emhass", specifier = "==0.18.5" }]
+requires-dist = [{ name = "emhass", specifier = "==0.18.7" }]
 
 [[package]]
 name = "flask"

@@ -49,7 +49,7 @@ Custom integrations:
   dashboard charts
 
 Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
-(tested on v0.18.6).
+(tested on v0.18.7).
 
 ## Install
 

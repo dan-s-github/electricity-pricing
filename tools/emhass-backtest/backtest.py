@@ -281,6 +281,12 @@ def main():
     gaps = per.loc[start:end - pd.Timedelta("1min"), ["load", "pv", "batt", "grid", "spot"]].isna().sum()
     if gaps.any():
         raise SystemExit(f"Missing data in range, pick other dates: {gaps[gaps > 0].to_dict()}")
+    frozen = per.index[per.frozen][(per.index[per.frozen] >= start) & (per.index[per.frozen] < end)]
+    if len(frozen):
+        raise SystemExit(f"Alpha ESS readings frozen in range ({len(frozen)} half-hours, "
+                         f"{frozen[0]:%d %b %H:%M}-{frozen[-1] + pd.Timedelta('30min'):%d %b %H:%M}), "
+                         f"pick other dates: run up to --end {frozen[0]:%Y-%m-%d} and from "
+                         f"--start {(frozen[-1] + pd.Timedelta('1D')).floor('D'):%Y-%m-%d}")
     if args.check_addon:
         return check_addon(args.check_addon, args.host, start, end)
 

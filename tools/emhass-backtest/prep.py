@@ -38,6 +38,12 @@ per = pd.DataFrame({
     "soc": step_mean(numeric(ent + "battery_soc")),
 })
 
+# A stalled Alpha ESS integration (as on 19 Oct) records nothing, so the
+# hold-last-value above repeats its last reading with no gap. Flag half-hours
+# where none of the power sensors reported; normally they report 30-100 times.
+power = num[num.entity.isin([ent + x for x in ("load", "generation", "battery_i_o", "grid_i_o_total")])]
+per["frozen"] = power.set_index("ts").resample("30min").size().reindex(per.index, fill_value=0) == 0
+
 # The Helios forecast curve attribute isn't recorded, so use the "power now"
 # history: the value Helios gave for each moment stands in for its forecast.
 hel = [(r["ts"], r["state"]) for r in rows if r["entity"] == "sensor.helios_forecast_power_now"]
@@ -133,4 +139,7 @@ residual = (per.load - per.pv - per.batt - per.grid).abs().mean()
 print(f"Periods {per.index[0]} .. {per.index[-1]}, {len(snaps)} price forecast snapshots, "
       f"{len(helios_snaps)} Helios curves")
 print(f"Energy balance check, mean |load - pv - batt - grid|: {residual:.0f} W (should be ~0)")
-print("Missing periods per column:", per.isna().sum().to_dict())
+print("Missing periods per column:", per.drop(columns="frozen").isna().sum().to_dict())
+frozen = per.index[per.frozen]
+print(f"Frozen Alpha ESS periods: {len(frozen)}"
+      + "".join(f"\n  {d}: {n}" for d, n in pd.Series(frozen.date).value_counts().sort_index().items()))

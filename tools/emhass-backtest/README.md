@@ -83,6 +83,12 @@ so the current period uses the settled price; before 5 Oct
 
 ## Limitations
 
+- **Stalled integration.** When the Alpha ESS integration stops updating
+  (18 Oct 23:00-19 Oct 17:30), HA keeps its last readings, so the data has
+  no gap. `prep.py` flags half-hours where none of the power sensors
+  reported, and `backtest.py` refuses ranges that include them; run either
+  side instead.
+
 - **Recorder history is short** (about 10 days) and lacks the Helios
   curve; use the Influx export for anything longer.
 - **Modes, not exact setpoints.** EMHASS's first step becomes grid charge,

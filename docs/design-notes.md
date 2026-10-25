@@ -325,7 +325,10 @@ on it yet, the grid-charge advisory above still controls the inverter.
   inverter, 12% minimum SOC (the inverter's current discharge floor).
   Battery power needs no sign flip (Alpha ESS reports discharge positive).
 - **No battery export** (`set_nodischarge_to_grid: true`), matching how the
-  system runs today.
+  system runs today. In the 10 Aug-17 Oct replay (below), allowing export
+  saved $16.28 over 68 days but discharged 261 kWh more, so it pays only
+  if battery wear costs under ~6c/kWh. In late October, with no peak
+  periods, it lost money. Price the wear before enabling it.
 - **End-of-horizon energy is valued, not penalised**
   (`battery_soc_final_reward_factor: 0.3`, new in v0.18.5). With the
   factor at 0, ending above `soc_final` was penalised as heavily as
@@ -338,7 +341,14 @@ on it yet, the grid-charge advisory above still controls the inverter.
   tariffs applied): it grid-charged overnight to hold energy the next
   day's sun would have supplied. In the same replay, battery export
   lost money at October prices and was roughly break-even after battery
-  wear under winter tariffs. Redo with real winter data.
+  wear under winter tariffs.
+  A longer replay on 2026-10-25 (EMHASS 0.18.7, 10 Aug-17 Oct, 68 days,
+  calibrated battery model; the replayed automation came within $0.40 of
+  the measured $35.11) confirms 0.3: $26.42, against $26.51 at 0 and
+  $26.92 at 0.9. That is $8.29 (~$3.70/month) better than the current
+  grid-charge automation ($34.71). 20-24 Oct showed no difference between
+  strategies (sunny, no peak periods). The backtest tool and its result
+  log are in `tools/emhass-backtest` on the `emhass-backtest` branch.
 - **PV module/tilt/azimuth in `config.json` are still EMHASS defaults.**
   They only matter if a run is made without the Helios forecast, which the
   automation's condition prevents.

@@ -98,6 +98,50 @@ Export is a single sensor (`solar_to_grid`), no summing needed. A possible
 wired in — not currently in the Energy dashboard config, so left out
 deliberately; revisit if the battery ever exports.
 
+Export now also goes through a wrapper, `sensor.grid_export_energy`, and
+both wrappers guard against a frozen integration. On 2026-10-19 the
+Alpha ESS integration stopped refreshing from 17:21 the day before until
+17:34. `solar_to_grid` kept yesterday's 19.2 kWh past midnight, then
+dropped straight to today's 14.4. Utility meters treat a drop as a reset
+and add nothing, so the day's export was lost from the daily, billing and
+earnings totals (the billing meters were recalibrated by hand). The
+wrappers now count a reading as 0 unless `daily_energy_date` is today and
+the source has updated since midnight. A frozen day then reads 0 and the
+recovery reads as a normal increase from 0. If the date sensor itself is
+unavailable, the wrappers go unavailable rather than 0, so a short outage
+during the day can't add the whole day's total again on recovery.
+
+## Known lag in the cost accumulator
+
+The cost and earnings totals price each kWh increment at the price
+showing when the increment arrives. That price is off in two ways:
+- The settled price is one trading period behind (see "Price source").
+- The Alpha ESS energy counters update in lumps, 0.1 kWh at best and
+  sometimes hours apart. On 2026-11-03 `grid_to_load` went from 0.0 to
+  1.2 kWh at 03:11 after three hours of import.
+
+So a kWh can be priced several periods away from when it crossed the
+meter. Buffering per period would only fix the first part.
+
+Measured 2026-11-03 over 35 days (22 Sep–2 Nov, 19 Oct stall excluded).
+The reference spread each day's billing-meter kWh across periods by
+integrated `instantaneous_grid_i_o_total`, then priced each period at its
+own settled price from the sensor's `history` attribute:
+
+| | Accumulator | Correctly timed | Difference |
+|---|---|---|---|
+| Import cost | $21.34 | $21.81 | −$0.46 (−2.1%) |
+| Export earnings | $9.89 | $10.43 | −$0.54 (−5.1%) |
+
+Daily errors average 4c on import and 2.5c on export, with a worst day of
+18c. Most of the error cancels within a day. Both totals read slightly
+low, roughly $1/month combined. That isn't worth timing kWh from grid
+power in templates, so the accumulators stay as they are. Re-measure if
+winter peak pricing makes adjacent periods differ more.
+
+The same comparison found import kWh about 35% above integrated grid
+power, while export agreed within 2%: issue #2, to settle against a bill.
+
 ## Battery grid-charge advisory
 
 Goal (per Dan, verbatim intent): **minimize energy costs** — not just "avoid
@@ -312,7 +356,10 @@ on it yet, the grid-charge advisory above still controls the inverter.
   inverter, 12% minimum SOC (the inverter's current discharge floor).
   Battery power needs no sign flip (Alpha ESS reports discharge positive).
 - **No battery export** (`set_nodischarge_to_grid: true`), matching how the
-  system runs today.
+  system runs today. In the 10 Aug-17 Oct replay (below), allowing export
+  saved $16.28 over 68 days but discharged 261 kWh more, so it pays only
+  if battery wear costs under ~6c/kWh. In late October, with no peak
+  periods, it lost money. Price the wear before enabling it.
 - **End-of-horizon energy is valued, not penalised**
   (`battery_soc_final_reward_factor: 0.3`, new in v0.18.5). With the
   factor at 0, ending above `soc_final` was penalised as heavily as
@@ -325,7 +372,14 @@ on it yet, the grid-charge advisory above still controls the inverter.
   tariffs applied): it grid-charged overnight to hold energy the next
   day's sun would have supplied. In the same replay, battery export
   lost money at October prices and was roughly break-even after battery
-  wear under winter tariffs. Redo with real winter data.
+  wear under winter tariffs.
+  A longer replay on 2026-10-25 (EMHASS 0.18.7, 10 Aug-17 Oct, 68 days,
+  calibrated battery model; the replayed automation came within $0.40 of
+  the measured $35.11) confirms 0.3: $26.42, against $26.51 at 0 and
+  $26.92 at 0.9. That is $8.29 (~$3.70/month) better than the current
+  grid-charge automation ($34.71). 20-24 Oct showed no difference between
+  strategies (sunny, no peak periods). The backtest tool and its result
+  log are in `tools/emhass-backtest` on the `emhass-backtest` branch.
 - **PV module/tilt/azimuth in `config.json` are still EMHASS defaults.**
   They only matter if a run is made without the Helios forecast, which the
   automation's condition prevents.

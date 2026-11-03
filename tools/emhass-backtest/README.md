@@ -1,0 +1,114 @@
+# EMHASS backtest
+
+Replays recorded history through EMHASS with different settings and compares
+them with the current grid-charge automation, at settled prices. Use it to
+check a config change (reward factor, battery export, ...) against real data
+before deploying it.
+
+## How it works
+
+Every half-hour in the chosen range, each strategy decides what the battery
+does using only what was known then: the day-ahead price snapshot, Helios,
+yesterday's load (EMHASS's naive load forecast) and its own simulated SOC.
+That decision is applied to the half-hour's actual load and PV, and the
+resulting grid flow is costed at the settled price.
+
+Strategies (edit `EMHASS` at the top of `backtest.py` to change them):
+
+| Name | What it is |
+|---|---|
+| `actual` | Measured grid flows, no simulation |
+| `automation` | Replays the real system's grid charging, self-use otherwise |
+| `self_use` | Never grid-charges |
+| `rule_gated` | The "Battery grid charge recommended" rule with its helper values (`RULE` in `backtest.py`), 00:00-04:00 only |
+| `rule_ungated` | The same rule allowed in any half-hour |
+| `emhass_*` | EMHASS naive-MPC each half-hour with `emhass/config.json` plus the listed overrides |
+
+Each runs under two tariffs: `actual` (the peak periods that apply on each
+date) and `winter` (June-August peak periods applied to every day).
+
+## Running
+
+Export history from one of two sources; both write the same `data/` files.
+
+- **InfluxDB (preferred).** Keeps everything, and also stores the Helios
+  forecast curve. Price forecasts start 2 Aug 2026 and Helios curves start
+  9 Aug 2026, so that's the earliest useful start. Needs a read-only user,
+  with its details in `data/influx.env` (gitignored):
+
+  ```
+  INFLUX_USER=backtest
+  INFLUX_PASS=...
+  INFLUX_DB=homeassistant
+  ```
+
+  Create the user in the InfluxDB add-on's Chronograf UI (Explore):
+  `CREATE USER backtest WITH PASSWORD '...'` then
+  `GRANT READ ON "homeassistant" TO backtest`.
+- **HA recorder.** No setup, but only the last ~10 days, and no Helios
+  curve, so PV uses Helios's recorded "power now" values instead.
+
+```sh
+cd tools/emhass-backtest
+uv run export_influx.py --since 2026-08-01  # or: ./export.sh (recorder)
+uv run prep.py       # half-hourly tables; energy balance check should be ~0 W
+uv run backtest.py   # or --start 2026-07-01 --end 2026-07-15 --only self_use,emhass_f03
+```
+
+`uv run` creates the environment from `pyproject.toml` and `uv.lock` on first use. To match a
+new add-on version, change the `emhass` pin in `pyproject.toml` and run `uv lock`.
+
+### Checking against the add-on
+
+The backtest runs EMHASS as a local library, not through the add-on, so it
+can drift from production (version, config, defaults). To check:
+
+```sh
+uv run backtest.py --check-addon 12 --start 2026-10-05 --end 2026-10-13
+```
+
+This compares `emhass/config.json` with the add-on's deployed config, then
+solves 12 evenly spaced half-hours both locally and with the add-on's
+dry-run endpoint (`/api/v1/dry-run/naive-mpc-optim`, EMHASS 0.18.7+), using
+the recorded SOC, the deployed config and the actual tariff. The add-on gets
+there over SSH (`--host`, default `homeassistant.local`). A dry run writes
+nothing on the add-on: no sensors, no plan, no caches. Modes and plan values
+should match exactly; any difference means it has drifted. Only one dry run
+runs at a time, so this is a check, not a way to run the backtest.
+The full set takes about 40 s for 9 days, several minutes for two months.
+
+Gaps are filled where the data allows: before 23 Sep there's no live price,
+so the current period uses the settled price; before 5 Oct
+`solar_forecast_next_daylight` is rebuilt from the three daily forecasts.
+
+## Limitations
+
+- **Stalled integration.** When the Alpha ESS integration stops updating
+  (18 Oct 23:00-19 Oct 17:30), HA keeps its last readings, so the data has
+  no gap. `prep.py` flags half-hours where none of the power sensors
+  reported, and `backtest.py` refuses ranges that include them; run either
+  side instead.
+
+- **Recorder history is short** (about 10 days) and lacks the Helios
+  curve; use the Influx export for anything longer.
+- **Modes, not exact setpoints.** EMHASS's first step becomes grid charge,
+  forced discharge, hold, or self-use: the controls the inverter has.
+- **`winter` uses the data's own sunshine.** Applying winter tariffs to
+  October days overstates PV, so treat it as a what-if.
+- **Calibration.** With the measured battery efficiencies in `backtest.py`
+  the replayed automation came within $0.33 of the measured cost over 64
+  days (10 Aug-13 Oct 2026). With the config's 0.95/0.95 it was $3.86 off.
+- **Battery wear isn't costed.** Compare "discharged kWh" between
+  strategies and price the extra throughput yourself.
+
+## Result log
+
+| Run | Range | Finding |
+|---|---|---|
+| 2026-10-14 | 5-13 Oct | Reward factor 0 and 0.3 equal; 0.9 $0.17 worse (winter tariff $0.46). EMHASS ~$0.40 better than the automation. Battery export lost money; with winter tariff ~break-even after wear. 0.3 deployed. |
+| 2026-10-14 | 5-13 Oct | Rule without the 00:00-04:00 gate: $0.25 better from two extra charges (12 Oct 04:00, 13 Oct 10:30). EMHASS still $0.17 better than ungated. |
+| 2026-10-14 | 10 Aug-13 Oct (Influx, real Helios curves, calibrated battery) | Automation $35.68 (actual $36.01), rule gated $34.59, ungated $35.02: keep the gate. EMHASS factor 0.3 $27.23, 0 $27.32, 0.9 $27.65: ~$8.50 (≈$4/month) better than the automation. Measured efficiencies in the EMHASS config made it worse ($27.84). Battery export $12.55 end-adjusted: $14.70 better than no export, for 237 kWh more throughput, so it only pays if wear costs under ~6c/kWh. |
+| 2026-10-25 | 5-13 Oct, `--check-addon 12` | EMHASS 0.18.7 locally and on the add-on: 12/12 first-step modes and plan values identical, config identical. |
+| 2026-10-25 | 10 Aug-17 Oct (68 days, EMHASS 0.18.7, avoiding the 19 Oct stall) | Automation $34.71 (actual $35.11). EMHASS 0.3 $26.42, 0 $26.51, 0.9 $26.92, measured efficiencies $27.01: 0.3 is still best, $8.29 (≈$3.70/month) better than the automation. Rule gated $33.62 vs ungated $34.09 (winter $33.75 vs $35.58): keep the gate. Battery export $11.31 end-adjusted: $16.28 better for 261 kWh more discharge, so it pays only if wear costs under ~6c/kWh (winter: ~$29 better). |
+| 2026-10-25 | 20-24 Oct | All strategies within $0.13 (-$2.28 to -$2.15): sunny, no peak periods, nothing to gain from grid charging. Battery export $0.45 worse (winter tariff ~$2.65 better). |
+| 2026-11-03 | 5-13 Oct, `--check-addon 12` | Add-on on EMHASS 0.18.8 (cvxpy 1.9.3, pandas 3.1.0). Against local cvxpy 1.7.5: 12/12 first-step modes match, costs within $0.0003, but 12 Oct 06:00 differs by 812 W at a later step (an equal-cost alternative plan). With cvxpy and pandas pinned to the add-on's versions: 12/12 identical. Config identical. |

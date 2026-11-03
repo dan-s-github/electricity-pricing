@@ -115,6 +115,7 @@ during the day can't add the whole day's total again on recovery.
 
 The cost and earnings totals price each kWh increment at the price
 showing when the increment arrives. That price is off in two ways:
+
 - The settled price is one trading period behind (see "Price source").
 - The Alpha ESS energy counters update in lumps, 0.1 kWh at best and
   sometimes hours apart. On 2026-11-03 `grid_to_load` went from 0.0 to
@@ -129,7 +130,7 @@ integrated `instantaneous_grid_i_o_total`, then priced each period at its
 own settled price from the sensor's `history` attribute:
 
 | | Accumulator | Correctly timed | Difference |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Import cost | $21.34 | $21.81 | −$0.46 (−2.1%) |
 | Export earnings | $9.89 | $10.43 | −$0.54 (−5.1%) |
 

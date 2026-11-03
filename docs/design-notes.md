@@ -111,6 +111,37 @@ recovery reads as a normal increase from 0. If the date sensor itself is
 unavailable, the wrappers go unavailable rather than 0, so a short outage
 during the day can't add the whole day's total again on recovery.
 
+## Known lag in the cost accumulator
+
+The cost and earnings totals price each kWh increment at the price
+showing when the increment arrives. That price is off in two ways:
+- The settled price is one trading period behind (see "Price source").
+- The Alpha ESS energy counters update in lumps, 0.1 kWh at best and
+  sometimes hours apart. On 2026-11-03 `grid_to_load` went from 0.0 to
+  1.2 kWh at 03:11 after three hours of import.
+
+So a kWh can be priced several periods away from when it crossed the
+meter. Buffering per period would only fix the first part.
+
+Measured 2026-11-03 over 35 days (22 Sep–2 Nov, 19 Oct stall excluded).
+The reference spread each day's billing-meter kWh across periods by
+integrated `instantaneous_grid_i_o_total`, then priced each period at its
+own settled price from the sensor's `history` attribute:
+
+| | Accumulator | Correctly timed | Difference |
+|---|---|---|---|
+| Import cost | $21.34 | $21.81 | −$0.46 (−2.1%) |
+| Export earnings | $9.89 | $10.43 | −$0.54 (−5.1%) |
+
+Daily errors average 4c on import and 2.5c on export, with a worst day of
+18c. Most of the error cancels within a day. Both totals read slightly
+low, roughly $1/month combined. That isn't worth timing kWh from grid
+power in templates, so the accumulators stay as they are. Re-measure if
+winter peak pricing makes adjacent periods differ more.
+
+The same comparison found import kWh about 35% above integrated grid
+power, while export agreed within 2%: issue #2, to settle against a bill.
+
 ## Battery grid-charge advisory
 
 Goal (per Dan, verbatim intent): **minimize energy costs** — not just "avoid

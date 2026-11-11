@@ -307,6 +307,51 @@ template:
         icon: mdi:calendar-today
         state: "{{ ((0.90 + 0.35 + 0.15) * 1.15) | round(4) }}"
 
+      # Billing-cycle average energy rates, to set against the bill's
+      # "Low ecoWHOLESALE" and "ecoWHOLESALE Export" lines. The billing
+      # meters' cost includes network, levy and GST, so take those back off.
+      # Ex GST like the bill. Import is per kWh including losses, as billed.
+      - name: "Billing cycle import energy rate"
+        unique_id: billing_cycle_import_energy_rate
+        unit_of_measurement: "NZD/kWh"
+        icon: mdi:cash-plus
+        availability: >
+          {{ is_number(states('sensor.grid_import_cost_billing'))
+             and (states('sensor.grid_import_billing_peak') | float(0)
+                  + states('sensor.grid_import_billing_offpeak') | float(0)) > 0 }}
+        state: >
+          {% set gst = 1.15 %}
+          {% set loss = 0.0476 %}
+          {% set peak_rate = 0.1504 %}
+          {% set offpeak_rate = 0.0457 %}
+          {% set transmission = 0.0302 %}
+          {% set levy = 0.002 %}
+          {% set peak = states('sensor.grid_import_billing_peak') | float(0) %}
+          {% set offpeak = states('sensor.grid_import_billing_offpeak') | float(0) %}
+          {% set cost = states('sensor.grid_import_cost_billing') | float %}
+          {% set energy = cost / gst
+               - peak * (peak_rate + transmission + levy)
+               - offpeak * (offpeak_rate + transmission + levy) %}
+
+          {{ (energy / ((peak + offpeak) * (1 + loss))) | round(4) }}
+
+      - name: "Billing cycle export energy rate"
+        unique_id: billing_cycle_export_energy_rate
+        unit_of_measurement: "NZD/kWh"
+        icon: mdi:cash-minus
+        availability: >
+          {{ is_number(states('sensor.grid_export_earnings_billing'))
+             and (states('sensor.grid_export_billing_peak') | float(0)
+                  + states('sensor.grid_export_billing_offpeak') | float(0)) > 0 }}
+        state: >
+          {% set gst = 1.15 %}
+          {% set peak_credit = 0.0524 %}
+          {% set peak = states('sensor.grid_export_billing_peak') | float(0) %}
+          {% set offpeak = states('sensor.grid_export_billing_offpeak') | float(0) %}
+          {% set earnings = states('sensor.grid_export_earnings_billing') | float %}
+
+          {{ ((earnings / gst - peak * peak_credit) / (peak + offpeak)) | round(4) }}
+
       - name: "Battery energy needed"
         unique_id: battery_energy_needed
         unit_of_measurement: "kWh"

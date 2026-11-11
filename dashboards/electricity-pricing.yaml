@@ -174,6 +174,16 @@ views:
           - type: tile
             entity: sensor.grid_export_billing_offpeak
             name: Export — off-peak
+          - type: tile
+            entity: sensor.billing_cycle_import_energy_rate
+            name: Import energy rate
+            vertical: false
+            features_position: bottom
+          - type: tile
+            entity: sensor.billing_cycle_export_energy_rate
+            name: Export energy rate
+            vertical: false
+            features_position: bottom
           - type: entities
             title: Billing cycle cost
             entities:
@@ -186,11 +196,11 @@ views:
               - entity: select.grid_export_billing
                 name: Export tariff (current)
           - type: history-graph
-            title: Cumulative cost / earnings this cycle
-            hours_to_show: 720
             entities:
               - entity: sensor.grid_import_cost_billing
               - entity: sensor.grid_export_earnings_billing
+            title: Cumulative cost / earnings this cycle
+            hours_to_show: 720
   - type: sections
     title: Pricing v2
     path: electricity-pricing-v2
@@ -319,8 +329,54 @@ views:
     title: EMHASS
     path: emhass
     icon: mdi:chart-timeline-variant
-    max_columns: 4
+    max_columns: 2
     sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Optimisation
+            heading_style: title
+            badges:
+              - type: entity
+                entity: binary_sensor.emhass_grid_charge_planned
+                name: Grid charge
+                tap_action:
+                  action: more-info
+              - type: entity
+                entity: automation.emhass_optimise_and_publish
+                name: Last run
+                state_content: last_triggered
+          - type: tile
+            entity: sensor.optim_status
+            name: Status
+          - type: tile
+            entity: sensor.soc_batt_forecast
+            name: Planned SOC
+          - type: tile
+            entity: sensor.p_batt_forecast
+            name: Battery now (+ discharge)
+          - type: tile
+            entity: sensor.emhass_import_price
+            name: Import price
+            vertical: false
+            features_position: bottom
+          - type: tile
+            entity: sensor.emhass_plan_value
+            name: Plan value
+            vertical: false
+            features_position: bottom
+          - type: tile
+            entity: sensor.al2002118050331_instantaneous_battery_soc
+            name: Actual SOC
+          - type: tile
+            entity: sensor.p_grid_forecast
+            name: Grid now (+ import)
+          - type: tile
+            entity: sensor.emhass_export_price
+            name: Export price
+            vertical: false
+            features_position: bottom
+        column_span: 2
       - type: grid
         column_span: 2
         cards:
@@ -370,7 +426,7 @@ views:
                 unit: W
                 curve: stepline
                 stroke_width: 2
-                data_generator: >
+                data_generator: |
                   return (entity.attributes.battery_scheduled_power || []).map(f => [
                     new Date(f.date).getTime(),
                     Number(f.p_batt_forecast)
@@ -385,51 +441,6 @@ views:
                     new Date(f.date).getTime(),
                     Number(f.p_grid_forecast)
                   ]);
-      - type: grid
-        cards:
-          - type: heading
-            heading: Optimisation
-            heading_style: title
-            badges:
-              - type: entity
-                entity: binary_sensor.emhass_grid_charge_planned
-                name: Grid charge
-                tap_action:
-                  action: more-info
-              - type: entity
-                entity: automation.emhass_optimise_and_publish
-                name: Last run
-                state_content: last_triggered
-          - type: tile
-            entity: sensor.optim_status
-            name: Status
-          - type: tile
-            entity: sensor.emhass_plan_value
-            name: Plan value
-            vertical: false
-            features_position: bottom
-          - type: tile
-            entity: sensor.p_batt_forecast
-            name: Battery now (+ discharge)
-          - type: tile
-            entity: sensor.soc_batt_forecast
-            name: Planned SOC
-          - type: tile
-            entity: sensor.p_grid_forecast
-            name: Grid now (+ import)
-          - type: tile
-            entity: sensor.al2002118050331_instantaneous_battery_soc
-            name: Actual SOC
-          - type: tile
-            entity: sensor.emhass_import_price
-            name: Import price
-            vertical: false
-            features_position: bottom
-          - type: tile
-            entity: sensor.emhass_export_price
-            name: Export price
-            vertical: false
-            features_position: bottom
       - type: grid
         column_span: 2
         cards:
@@ -468,7 +479,7 @@ views:
                 type: area
                 opacity: 0.3
                 stroke_width: 2
-                data_generator: >
+                data_generator: |
                   return (entity.attributes.battery_scheduled_soc || []).map(f => [
                     new Date(f.date).getTime(),
                     Number(f.soc_batt_forecast)
@@ -479,7 +490,7 @@ views:
                 yaxis_id: price
                 curve: stepline
                 stroke_width: 2
-                data_generator: >
+                data_generator: |
                   return (entity.attributes.unit_load_cost_forecasts || []).map(f => [
                     new Date(f.date).getTime(),
                     Number(f.unit_load_cost)
@@ -490,8 +501,9 @@ views:
                 yaxis_id: price
                 curve: stepline
                 stroke_width: 2
-                data_generator: >
+                data_generator: |
                   return (entity.attributes.unit_prod_price_forecasts || []).map(f => [
                     new Date(f.date).getTime(),
                     Number(f.unit_prod_price)
                   ]);
+    cards: []

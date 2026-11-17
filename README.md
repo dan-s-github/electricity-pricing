@@ -103,6 +103,11 @@ never writes to the real inverter:
 HA_TOKEN=$(op read 'op://Private/ha-dev-claude-code/credential') tools/deploy-dev.sh --restart
 ```
 
+Add `--emhass` to install `packages/emhass.yaml` too. The add-on's config
+folder isn't reachable over ssh, so the script writes the add-on config with
+ha-dev's ids to `emhass/config.dev.json` for pasting in. ha-dev has no
+Helios forecast, so EMHASS gets no PV forecast there.
+
 The `(template)` sensors are the old formulas, kept only for that
 comparison. Delete them once the integration's prices match.
 

@@ -113,6 +113,13 @@ template:
   - binary_sensor:
       - name: "Vector peak period"
         unique_id: vector_peak_period
+        availability: "{{ has_value('binary_sensor.home_peak') }}"
+        state: "{{ is_state('binary_sensor.home_peak', 'on') }}"
+
+      # Template copies of the replaced sensors, kept only to compare them
+      # with Electricity Billing NZ. Delete them after the parity check.
+      - name: "Vector peak period (template)"
+        unique_id: vector_peak_period_template
         state: >
           {% set m = now().month %}
           {% set h = now().hour %}
@@ -205,6 +212,42 @@ template:
           {% set dated_today = states('sensor.al2002118050331_daily_energy_date') == now().date() | string %}
           {{ s.state | float | round(3) if dated_today and s.last_updated >= today_at() else 0 }}
 
+  # --- Prices from Electricity Billing NZ (config entry "Home") ---
+  # These keep the entity ids the rest of this package, EMHASS and the
+  # dashboard read. Rates, losses, margins and peak times live in the
+  # integration now.
+  - sensor:
+      - name: "Electricity import price"
+        unique_id: electricity_import_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-import
+        availability: "{{ is_number(states('sensor.home_import_price')) }}"
+        state: "{{ states('sensor.home_import_price') | float | round(4) }}"
+
+      - name: "Electricity export price"
+        unique_id: electricity_export_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-export
+        availability: "{{ is_number(states('sensor.home_export_price')) }}"
+        state: "{{ states('sensor.home_export_price') | float | round(4) }}"
+
+      - name: "Electricity import price (live)"
+        unique_id: electricity_import_price_live
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-import
+        availability: "{{ is_number(states('sensor.home_import_price_live')) }}"
+        state: "{{ states('sensor.home_import_price_live') | float | round(4) }}"
+
+      - name: "Electricity fixed daily charge"
+        unique_id: electricity_fixed_daily_charge
+        unit_of_measurement: "NZD/day"
+        icon: mdi:calendar-today
+        availability: "{{ is_number(states('sensor.home_daily_charge')) }}"
+        state: "{{ states('sensor.home_daily_charge') | float | round(4) }}"
+
   # --- Live prices, battery need, overnight/arbitrage forecast pricing ---
   - sensor:
       - name: "Electricity spot price"
@@ -226,8 +269,8 @@ template:
             {{ v | round(5) }}
           {% endif %}
 
-      - name: "Electricity import price"
-        unique_id: electricity_import_price
+      - name: "Electricity import price (template)"
+        unique_id: electricity_import_price_template
         unit_of_measurement: "NZD/kWh"
         state_class: measurement
         icon: mdi:transmission-tower-import
@@ -241,12 +284,12 @@ template:
           {% set transmission = 0.0302 %}
           {% set levy = 0.002 %}
           {% set spot = states('sensor.electricity_spot_price') | float %}
-          {% set network = peak_rate if is_state('binary_sensor.vector_peak_period', 'on') else offpeak_rate %}
+          {% set network = peak_rate if is_state('binary_sensor.vector_peak_period_template', 'on') else offpeak_rate %}
 
           {{ (((spot + import_margin) * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
 
-      - name: "Electricity export price"
-        unique_id: electricity_export_price
+      - name: "Electricity export price (template)"
+        unique_id: electricity_export_price_template
         unit_of_measurement: "NZD/kWh"
         state_class: measurement
         icon: mdi:transmission-tower-export
@@ -256,7 +299,7 @@ template:
           {% set peak_credit = 0.0524 %}
           {% set export_margin = 0.019 %}
           {% set spot = states('sensor.electricity_spot_price') | float %}
-          {% set credit = peak_credit if is_state('binary_sensor.vector_peak_period', 'on') else 0 %}
+          {% set credit = peak_credit if is_state('binary_sensor.vector_peak_period_template', 'on') else 0 %}
 
           {{ ((spot - export_margin + credit) * gst) | round(4) }}
 
@@ -285,8 +328,8 @@ template:
             {{ v | round(5) }}
           {% endif %}
 
-      - name: "Electricity import price (live)"
-        unique_id: electricity_import_price_live
+      - name: "Electricity import price (live, template)"
+        unique_id: electricity_import_price_live_template
         unit_of_measurement: "NZD/kWh"
         state_class: measurement
         icon: mdi:transmission-tower-import
@@ -300,12 +343,12 @@ template:
           {% set transmission = 0.0302 %}
           {% set levy = 0.002 %}
           {% set spot = states('sensor.electricity_spot_price_live') | float %}
-          {% set network = peak_rate if is_state('binary_sensor.vector_peak_period', 'on') else offpeak_rate %}
+          {% set network = peak_rate if is_state('binary_sensor.vector_peak_period_template', 'on') else offpeak_rate %}
 
           {{ (((spot + import_margin) * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
 
-      - name: "Electricity fixed daily charge"
-        unique_id: electricity_fixed_daily_charge
+      - name: "Electricity fixed daily charge (template)"
+        unique_id: electricity_fixed_daily_charge_template
         unit_of_measurement: "NZD/day"
         icon: mdi:calendar-today
         state: "{{ ((0.90 + 0.35 + 0.15) * 1.15) | round(4) }}"

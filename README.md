@@ -43,6 +43,9 @@ Custom integrations:
   (tested on v0.8.5) for the inverter sensors, charge cap and grid-charge switch
 - [electricityinfo](https://github.com/dan-s-github/ha-electricityinfo-nz)
   for the ROS0221 settled, live and day-ahead prices
+- [Electricity Billing NZ](https://github.com/dan-s-github/ha-electricity-billing-nz)
+  for the landed prices, daily charge and peak flag. Name its config entry
+  "Home": the package reads `sensor.home_*` and `binary_sensor.home_peak`.
 - [Helios Forecast](https://github.com/ReikanYsora/Helios-Forecast),
   Solcast and Forecast.Solar for solar forecasts
 - [apexcharts-card](https://github.com/RomRider/apexcharts-card) for the
@@ -88,6 +91,20 @@ Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
    pricing package, then run `ha core check` and restart. It
    runs at :01 and :31 past each hour and publishes `sensor.p_batt_forecast`,
    `sensor.soc_batt_forecast`, `sensor.p_grid_forecast` and related sensors.
+
+### Trying it on a dev instance
+
+`tools/deploy-dev.sh` installs the package on ha-dev next to the
+integration, for comparing the two. It maps the Alpha ESS entity ids to
+ha-dev's longer ones and leaves out the battery automations, so ha-dev
+never writes to the real inverter:
+
+```sh
+HA_TOKEN=$(op read 'op://Private/ha-dev-claude-code/credential') tools/deploy-dev.sh --restart
+```
+
+The `(template)` sensors are the old formulas, kept only for that
+comparison. Delete them once the integration's prices match.
 
 ## Things that will go stale
 

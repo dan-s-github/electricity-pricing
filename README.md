@@ -100,7 +100,9 @@ ha-dev's longer ones and leaves out the battery automations, so ha-dev
 never writes to the real inverter:
 
 ```sh
-HA_TOKEN=$(op read 'op://Private/ha-dev-claude-code/credential') tools/deploy-dev.sh --restart
+# once: keep the ha-dev token in the Keychain
+security add-generic-password -U -a "$USER" -s ha-dev-claude-code -w "$(op read 'op://Private/ha-dev-claude-code/credential')"
+tools/deploy-dev.sh --restart
 ```
 
 Add `--emhass` to install `packages/emhass.yaml` too. The add-on's config

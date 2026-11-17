@@ -13,9 +13,10 @@
 # With --dashboard it saves dashboards/electricity-pricing.yaml, with the
 # mapped ids, to the /electricity-pricing dashboard (created if missing).
 #
-# Usage: HA_TOKEN=... tools/deploy-dev.sh [--emhass] [--dashboard] [--restart]
+# Usage: tools/deploy-dev.sh [--emhass] [--dashboard] [--restart]
 # HA_TOKEN is a long-lived token for ha-dev; it's used to check the config
-# and, with --restart, to restart Home Assistant.
+# and, with --restart, to restart Home Assistant. Without it the script
+# reads the "ha-dev-claude-code" Keychain item.
 set -euo pipefail
 
 host=${HA_DEV_HOST:-ha-dev}
@@ -31,7 +32,10 @@ for arg in "$@"; do
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
 done
-: "${HA_TOKEN:?set HA_TOKEN to a long-lived token for ha-dev}"
+if [[ -z ${HA_TOKEN:-} ]]; then
+  HA_TOKEN=$(security find-generic-password -s ha-dev-claude-code -w) ||
+    { echo "Set HA_TOKEN or add the ha-dev-claude-code Keychain item." >&2; exit 1; }
+fi
 
 cd "$(dirname "$0")/.."
 tmp=$(mktemp -d)

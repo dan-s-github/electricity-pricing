@@ -19,8 +19,11 @@ From the source bill (Vector network charges + ecoWHOLESALE energy + other charg
   $0.0302/kWh, daily $0.90/day
 - **Network (export credit):** $0.0524/kWh, peak periods only
 - **Energy (wholesale):** spot price with an 8.93/187.68 = **4.76% loss
-  factor** applied on import only (export has 0 losses per the bill)
+  factor** applied on import only (export has 0 losses per the bill), plus
+  a retailer margin: **+2.86c/kWh on import, -1.90c/kWh on export** (see
+  below)
 - **Other:** EA levy $0.002/kWh, metering $0.35/day, admin/climate $0.15/day
+  (admin fee confirmed by Ecotricity 2026-11-12)
 - **GST:** 15%, applied last, multiplicatively (`* 1.15`) — the bill totals
   are GST-inclusive
 
@@ -28,6 +31,50 @@ All of this is hardcoded as constants inside the price sensor templates,
 not pulled from anywhere live. **These will go stale** — Vector's rates
 changed once already (1 Apr 2026) during this build. No mechanism currently
 alerts on rate changes; revisit periodically against a real bill.
+
+### Retailer margin on ecoWHOLESALE energy
+
+The bill's "Low ecoWHOLESALE" and "ecoWHOLESALE Export" rates aren't plain
+spot. Checked 2026-11-12 against 15 bills (Aug 2025 - Oct 2026): each
+month's rate was set against ROS0221 final prices (EMI dataset) weighted by
+the half-hourly grid flow from InfluxDB. In the 11 months where InfluxDB's
+kWh match the bill's within about 5%, the gap is steady:
+
+- import rate = weighted spot + 2.74 to 2.98c (median **2.86c**), charged on
+  kWh including losses
+- export rate = weighted spot - 1.79 to 2.10c (median **1.90c**)
+
+All ex GST. It's a flat amount per kWh, not a percentage: it holds from
+0.7c to 16c spot. The months left out (Oct 2025, Dec 2025, Feb 2026) have
+gaps in grid power history, and Jan 2026 has none in InfluxDB. The margins
+live as `import_margin` / `export_margin` in every landed-price template
+(`packages/electricity_pricing.yaml`, `packages/emhass.yaml`) and as
+`IMP_MARGIN` / `EXP_MARGIN` in `tools/emhass-backtest/backtest.py`.
+
+A grid-charge-then-export round trip costs about 5.6c/kWh more incl GST
+than spot alone suggested, so arbitrage clears its threshold less often.
+
+### Network price category: ARHLC, though the house has no ripple control
+
+Checked 2026-11-11 against the EA registry (ICP `<ICP>`) and
+Vector's 1 Apr 2026 pricing schedule. The registry confirms POC ROS0221
+and loss category VECA1 (factor 1.0476 on customer-meter kWh, which is the
+4.76% above). The price category is **ARHLC** (residential low user, time of
+use, *controlled*), and the network rates above are ARHLC's.
+
+Vector's "controlled" categories require an electric hot water cylinder on
+Vector's load control. The house has no ripple control, and the meter only
+has `UN` (import) and `EG` (export) channels, with no `CN` controlled
+channel. Strictly, the ICP fits **ARHLU** (uncontrolled): off-peak $0.0466,
+peak $0.1513, so +$0.0009/kWh, about $1-2/year. The config follows what the
+bill charges (ARHLC). If a bill ever shows the ARHLU rates, update
+`peak_rate` and `offpeak_rate` in every template in
+`packages/electricity_pricing.yaml` and `packages/emhass.yaml`.
+
+The DER category (ARHLD: $0.0393 / $0.1440) needs a device of 1.2 kW or
+more that the retailer can turn off remotely, and the retailer must have
+signed Vector's Load Management Protocol. Without ripple control that would
+need another controllable device. Not pursued: it would save about $5-15/year.
 
 ## Peak window definition (Vector TOU, effective 1 Apr 2026)
 

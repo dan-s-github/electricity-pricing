@@ -21,6 +21,7 @@ TZ = "Pacific/Auckland"
 
 # Same constants as the emhass_naive_mpc_optim payload in packages/emhass.yaml
 GST, LOSS, PEAK, OFF, TRANS, LEVY, CREDIT = 1.15, 0.0476, 0.1504, 0.0457, 0.0302, 0.002, 0.0524
+IMP_MARGIN, EXP_MARGIN = 0.0286, 0.019
 # Battery model for the simulation. Efficiencies are measured, not from
 # config: 10 Aug-13 Oct 2026 the battery's SOC rose 8.66%/kWh charged and fell
 # 9.01%/kWh discharged (round trip 0.98).
@@ -73,11 +74,11 @@ def is_peak(t, scenario):
 
 
 def imp_price(spot_c, t, sc):
-    return (spot_c / 100 * (1 + LOSS) + (PEAK if is_peak(t, sc) else OFF) + TRANS + LEVY) * GST
+    return ((spot_c / 100 + IMP_MARGIN) * (1 + LOSS) + (PEAK if is_peak(t, sc) else OFF) + TRANS + LEVY) * GST
 
 
 def exp_price(spot_c, t, sc):
-    return (spot_c / 100 + (CREDIT if is_peak(t, sc) else 0)) * GST
+    return (spot_c / 100 - EXP_MARGIN + (CREDIT if is_peak(t, sc) else 0)) * GST
 
 
 def apply(mode, power, soc, load, pv):

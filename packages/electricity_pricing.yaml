@@ -235,6 +235,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set loss = 0.0476 %}
+          {% set import_margin = 0.0286 %}
           {% set peak_rate = 0.1504 %}
           {% set offpeak_rate = 0.0457 %}
           {% set transmission = 0.0302 %}
@@ -242,7 +243,7 @@ template:
           {% set spot = states('sensor.electricity_spot_price') | float %}
           {% set network = peak_rate if is_state('binary_sensor.vector_peak_period', 'on') else offpeak_rate %}
 
-          {{ ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
+          {{ (((spot + import_margin) * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
 
       - name: "Electricity export price"
         unique_id: electricity_export_price
@@ -253,10 +254,11 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set peak_credit = 0.0524 %}
+          {% set export_margin = 0.019 %}
           {% set spot = states('sensor.electricity_spot_price') | float %}
           {% set credit = peak_credit if is_state('binary_sensor.vector_peak_period', 'on') else 0 %}
 
-          {{ ((spot + credit) * gst) | round(4) }}
+          {{ ((spot - export_margin + credit) * gst) | round(4) }}
 
       # `electricity_import_price` above (settled) is one trading period behind
       # real time - correct for cost accounting (matches the bill), wrong for a
@@ -292,6 +294,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set loss = 0.0476 %}
+          {% set import_margin = 0.0286 %}
           {% set peak_rate = 0.1504 %}
           {% set offpeak_rate = 0.0457 %}
           {% set transmission = 0.0302 %}
@@ -299,7 +302,7 @@ template:
           {% set spot = states('sensor.electricity_spot_price_live') | float %}
           {% set network = peak_rate if is_state('binary_sensor.vector_peak_period', 'on') else offpeak_rate %}
 
-          {{ ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
+          {{ (((spot + import_margin) * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
 
       - name: "Electricity fixed daily charge"
         unique_id: electricity_fixed_daily_charge
@@ -401,6 +404,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set loss = 0.0476 %}
+          {% set import_margin = 0.0286 %}
           {% set offpeak_rate = 0.0457 %}
           {% set transmission = 0.0302 %}
           {% set levy = 0.002 %}
@@ -419,7 +423,7 @@ template:
             {% set dt = dt | as_local if dt else none %}
             {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
               {% set spot = p.price / 100 %}
-              {% set landed = (spot * (1 + loss) + offpeak_rate + transmission + levy) * gst %}
+              {% set landed = ((spot + import_margin) * (1 + loss) + offpeak_rate + transmission + levy) * gst %}
               {% set ns.total = ns.total + landed %}
               {% set ns.count = ns.count + 1 %}
             {% endif %}
@@ -436,6 +440,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set peak_credit = 0.0524 %}
+          {% set export_margin = 0.019 %}
           {% set periods = state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] %}
           {# The peak the next (or current) charge window serves: today until
              the window ends, tomorrow after - so 23:56 snapshots tomorrow's. #}
@@ -459,7 +464,7 @@ template:
               {% for w in windows %}
                 {% if w[0] <= dt.hour < w[1] %}
                   {% set spot = p.price / 100 %}
-                  {% set landed = (spot + peak_credit) * gst %}
+                  {% set landed = (spot - export_margin + peak_credit) * gst %}
                   {% set ns.total = ns.total + landed %}
                   {% set ns.count = ns.count + 1 %}
                 {% endif %}
@@ -615,6 +620,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set loss = 0.0476 %}
+          {% set import_margin = 0.0286 %}
           {% set offpeak_rate = 0.0457 %}
           {% set transmission = 0.0302 %}
           {% set levy = 0.002 %}
@@ -629,7 +635,7 @@ template:
             {% set dt = dt | as_local if dt else none %}
             {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
               {% set spot = p.price / 100 %}
-              {% set landed = (spot * (1 + loss) + offpeak_rate + transmission + levy) * gst %}
+              {% set landed = ((spot + import_margin) * (1 + loss) + offpeak_rate + transmission + levy) * gst %}
               {% set ns.total = ns.total + landed %}
               {% set ns.count = ns.count + 1 %}
             {% endif %}
@@ -644,6 +650,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set peak_credit = 0.0524 %}
+          {% set export_margin = 0.019 %}
           {% set periods = state_attr('sensor.ros0221_c_kwh_settled_price', 'history') or [] %}
           {% set target_date = now().date() %}
           {% set target_month = target_date.month %}
@@ -663,7 +670,7 @@ template:
               {% for w in windows %}
                 {% if w[0] <= dt.hour < w[1] %}
                   {% set spot = p.price / 100 %}
-                  {% set landed = (spot + peak_credit) * gst %}
+                  {% set landed = (spot - export_margin + peak_credit) * gst %}
                   {% set ns.total = ns.total + landed %}
                   {% set ns.count = ns.count + 1 %}
                 {% endif %}

@@ -10,7 +10,10 @@
 # EMHASS add-on config with the mapped ids to emhass/config.dev.json (the
 # add-on's config folder isn't reachable over ssh, so paste it in by hand).
 #
-# Usage: HA_TOKEN=... tools/deploy-dev.sh [--emhass] [--restart]
+# With --dashboard it saves dashboards/electricity-pricing.yaml, with the
+# mapped ids, to the /electricity-pricing dashboard (created if missing).
+#
+# Usage: HA_TOKEN=... tools/deploy-dev.sh [--emhass] [--dashboard] [--restart]
 # HA_TOKEN is a long-lived token for ha-dev; it's used to check the config
 # and, with --restart, to restart Home Assistant.
 set -euo pipefail
@@ -19,10 +22,12 @@ host=${HA_DEV_HOST:-ha-dev}
 api=${HA_DEV_API:-https://ha-dev.mohni.info/api}
 restart=false
 emhass=false
+dashboard=false
 for arg in "$@"; do
   case $arg in
     --restart) restart=true ;;
     --emhass) emhass=true ;;
+    --dashboard) dashboard=true ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -76,6 +81,13 @@ install "$tmp/electricity_pricing.yaml" electricity_pricing.yaml
 if $emhass; then
   install "$tmp/emhass.yaml" emhass.yaml
   echo "Paste emhass/config.dev.json into the EMHASS add-on's config.json and restart the add-on."
+fi
+
+if $dashboard; then
+  map_ids <dashboards/electricity-pricing.yaml >"$tmp/dashboard.yaml"
+  HA_TOKEN=$HA_TOKEN uv run -q --no-project --with websockets --with ruamel.yaml \
+    python tools/dev_dashboard.py "${api/#http/ws}/websocket" electricity-pricing \
+    "Electricity pricing" "$tmp/dashboard.yaml"
 fi
 
 auth=(-H "Authorization: Bearer $HA_TOKEN")

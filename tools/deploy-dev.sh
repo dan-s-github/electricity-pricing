@@ -87,6 +87,11 @@ fi
 
 if $restart; then
   # Utility meters and new template entities only load on a full restart.
-  curl -fsS "${auth[@]}" -X POST "$api/services/homeassistant/restart" >/dev/null
+  # HA can drop the connection as it goes down (curl exit 52): that's fine.
+  status=0
+  curl -fsS "${auth[@]}" -X POST "$api/services/homeassistant/restart" >/dev/null || status=$?
+  if ((status != 0 && status != 52)); then
+    exit "$status"
+  fi
   echo "Restarting Home Assistant on $host."
 fi

@@ -75,7 +75,8 @@ This compares `emhass/config.json` with the add-on's deployed config, then
 solves 12 evenly spaced half-hours both locally and with the add-on's
 dry-run endpoint (`/api/v1/dry-run/naive-mpc-optim`, EMHASS 0.18.7+), using
 the recorded SOC, the deployed config and the actual tariff. The add-on gets
-there over SSH (`--host`, default `homeassistant.local`). A dry run writes
+there over SSH (`--host`, default `homeassistant.local`), with the token
+from the add-on's `emhass_api_token` option (EMHASS 0.18.10+). A dry run writes
 nothing on the add-on: no sensors, no plan, no caches. Modes and plan values
 should match exactly; any difference means it has drifted. Only one dry run
 runs at a time, so this is a check, not a way to run the backtest.

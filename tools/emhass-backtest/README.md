@@ -75,9 +75,10 @@ This compares `emhass/config.json` with the add-on's deployed config, then
 solves 12 evenly spaced half-hours both locally and with the add-on's
 dry-run endpoint (`/api/v1/dry-run/naive-mpc-optim`, EMHASS 0.18.7+), using
 the recorded SOC, the deployed config and the actual tariff. The add-on gets
-there over SSH (`--host`, default `homeassistant.local`), with the token
-from the add-on's `emhass_api_token` option (EMHASS 0.18.10+). A dry run writes
-nothing on the add-on: no sensors, no plan, no caches. Modes and plan values
+there over SSH (`--host`, default `homeassistant.local`), with the add-on's
+API token (its `emhass_api_token` option, or the one it generated; EMHASS
+0.18.10+). A dry run writes nothing on the add-on: no sensors, no plan, no
+caches. Modes and plan values
 should match exactly; any difference means it has drifted. Only one dry run
 runs at a time, so this is a check, not a way to run the backtest.
 The full set takes about 40 s for 9 days, several minutes for two months.
@@ -118,3 +119,4 @@ so the current period uses the settled price; before 5 Oct
 | 2026-10-25 | 20-24 Oct | All strategies within $0.13 (-$2.28 to -$2.15): sunny, no peak periods, nothing to gain from grid charging. Battery export $0.45 worse (winter tariff ~$2.65 better). |
 | 2026-11-03 | 5-13 Oct, `--check-addon 12` | Add-on on EMHASS 0.18.8 (cvxpy 1.9.3, pandas 3.1.0). Against local cvxpy 1.7.5: 12/12 first-step modes match, costs within $0.0003, but 12 Oct 06:00 differs by 812 W at a later step (an equal-cost alternative plan). With cvxpy and pandas pinned to the add-on's versions: 12/12 identical. Config identical. |
 | 2026-11-15 | 5-13 Oct, `--check-addon 12` | Add-on on EMHASS 0.18.9 (cvxpy 1.9.3, pandas 3.1.1, numpy 2.5.4, highspy 1.16.0). With only emhass, cvxpy and pandas pinned (local numpy 2.2.6, highspy 1.15.1): 12/12 first-step modes match, but 12 Oct 23:30 differs by 1717 W at a later step ($0.0012). With numpy and highspy pinned too: 12/12 identical. Config identical. |
+| 2026-11-19 | 5-13 Oct, `--check-addon 12` | Add-on on EMHASS 0.18.11 (cvxpy 1.9.3, pandas 3.1.1, numpy 2.5.5, highspy 1.16.0), dry runs authenticated with the API token. All five pinned: 12/12 identical, worst plan value difference $0.0000. Config identical. |

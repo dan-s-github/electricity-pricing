@@ -85,12 +85,15 @@ _tokens = {}
 
 
 def _api_token(host):
-    """The add-on's emhass_api_token option (EMHASS >= 0.18.10 rejects calls without it)."""
+    """The add-on's API token (EMHASS >= 0.18.10 rejects calls without it).
+
+    The emhass_api_token option if set, otherwise the token the add-on
+    generated at first start.
+    """
     if host not in _tokens:
         options = json.loads(_ssh(host, f"sudo -n docker exec {ADDON_CONTAINER} cat /data/options.json"))
-        if not options.get("emhass_api_token"):
-            raise RuntimeError("Set the add-on's emhass_api_token option first")
-        _tokens[host] = options["emhass_api_token"]
+        _tokens[host] = options.get("emhass_api_token") or _ssh(
+            host, f"sudo -n docker exec {ADDON_CONTAINER} cat /data/emhass_api_token").decode().strip()
     return _tokens[host]
 
 

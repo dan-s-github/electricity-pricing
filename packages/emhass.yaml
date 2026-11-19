@@ -13,7 +13,8 @@
 # All three are {timestamp: value} maps, which EMHASS aligns onto its own
 # 30-min grid, so list lengths never have to match exactly.
 #
-# Since EMHASS 0.18.10 every API call needs the add-on's emhass_api_token.
+# Since EMHASS 0.18.10 every API call needs the add-on's API token (generated
+# at first start and shown in the EMHASS web UI, or set as emhass_api_token).
 # secrets.yaml holds it as the whole header value:
 #   emhass_api_authorization: "Bearer <emhass_api_token>"
 

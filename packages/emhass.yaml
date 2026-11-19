@@ -12,12 +12,18 @@
 #   pv_power_forecast   - Helios forecast curve, W
 # All three are {timestamp: value} maps, which EMHASS aligns onto its own
 # 30-min grid, so list lengths never have to match exactly.
+#
+# Since EMHASS 0.18.10 every API call needs the add-on's emhass_api_token.
+# secrets.yaml holds it as the whole header value:
+#   emhass_api_authorization: "Bearer <emhass_api_token>"
 
 rest_command:
   emhass_naive_mpc_optim:
     url: http://5b918bf2-emhass:5000/action/naive-mpc-optim
     method: post
     timeout: 120
+    headers:
+      Authorization: !secret emhass_api_authorization
     content_type: application/json
     payload: >-
       {%- set gst = 1.15 -%}
@@ -84,6 +90,8 @@ rest_command:
     url: http://5b918bf2-emhass:5000/action/publish-data
     method: post
     timeout: 60
+    headers:
+      Authorization: !secret emhass_api_authorization
     content_type: application/json
     payload: "{}"
 

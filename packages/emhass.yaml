@@ -27,7 +27,7 @@ rest_command:
       {%- set transmission = 0.0302 -%}
       {%- set levy = 0.002 -%}
       {%- set peak_credit = 0.0524 -%}
-      {%- set import_margin = 0.0286 -%}
+      {%- set import_margin = 0.028 -%}
       {%- set export_margin = 0.019 -%}
       {%- set ns = namespace(cost=[], prod=[], pv=[]) -%}
 

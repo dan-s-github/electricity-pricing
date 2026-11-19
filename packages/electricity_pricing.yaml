@@ -278,7 +278,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set loss = 0.0476 %}
-          {% set import_margin = 0.0286 %}
+          {% set import_margin = 0.028 %}
           {% set peak_rate = 0.1504 %}
           {% set offpeak_rate = 0.0457 %}
           {% set transmission = 0.0302 %}
@@ -337,7 +337,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set loss = 0.0476 %}
-          {% set import_margin = 0.0286 %}
+          {% set import_margin = 0.028 %}
           {% set peak_rate = 0.1504 %}
           {% set offpeak_rate = 0.0457 %}
           {% set transmission = 0.0302 %}
@@ -447,7 +447,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set loss = 0.0476 %}
-          {% set import_margin = 0.0286 %}
+          {% set import_margin = 0.028 %}
           {% set offpeak_rate = 0.0457 %}
           {% set transmission = 0.0302 %}
           {% set levy = 0.002 %}
@@ -663,7 +663,7 @@ template:
         state: >
           {% set gst = 1.15 %}
           {% set loss = 0.0476 %}
-          {% set import_margin = 0.0286 %}
+          {% set import_margin = 0.028 %}
           {% set offpeak_rate = 0.0457 %}
           {% set transmission = 0.0302 %}
           {% set levy = 0.002 %}

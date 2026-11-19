@@ -20,7 +20,7 @@ From the source bill (Vector network charges + ecoWHOLESALE energy + other charg
 - **Network (export credit):** $0.0524/kWh, peak periods only
 - **Energy (wholesale):** spot price with an 8.93/187.68 = **4.76% loss
   factor** applied on import only (export has 0 losses per the bill), plus
-  a retailer margin: **+2.86c/kWh on import, -1.90c/kWh on export** (see
+  a retailer margin: **+2.80c/kWh on import, -1.90c/kWh on export** (see
   below)
 - **Other:** EA levy $0.002/kWh, metering $0.35/day, admin/climate $0.15/day
   (admin fee confirmed by Ecotricity 2026-11-12)
@@ -50,6 +50,18 @@ gaps in grid power history, and Jan 2026 has none in InfluxDB. The margins
 live as `import_margin` / `export_margin` in every landed-price template
 (`packages/electricity_pricing.yaml`, `packages/emhass.yaml`) and as
 `IMP_MARGIN` / `EXP_MARGIN` in `tools/emhass-backtest/backtest.py`.
+
+Ecotricity confirmed the margins on 2026-11-19 (see
+[ecotricity-margin-reply-2026-11-19.md](ecotricity-margin-reply-2026-11-19.md)):
+**+2.80c import, -1.90c export** for Low User customers, flat per kWh, not
+varying with time, season or volume. The config uses their 2.80c, not the
+measured 2.86c; the 0.06c difference is inside the month-to-month spread.
+Their reply didn't settle whether the margin is applied before or after
+losses. The bills fit "before" (margin × 1.0476, as in the templates):
+applying it after losses would show up as spot + 2.67c per billed kWh, below
+every month measured. They also don't know yet what the margins will be once
+the Low User classification ends in April 2027, so check the first bill
+after that.
 
 A grid-charge-then-export round trip costs about 5.6c/kWh more incl GST
 than spot alone suggested, so arbitrage clears its threshold less often.

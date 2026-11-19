@@ -21,7 +21,7 @@ TZ = "Pacific/Auckland"
 
 # Same constants as the emhass_naive_mpc_optim payload in packages/emhass.yaml
 GST, LOSS, PEAK, OFF, TRANS, LEVY, CREDIT = 1.15, 0.0476, 0.1504, 0.0457, 0.0302, 0.002, 0.0524
-IMP_MARGIN, EXP_MARGIN = 0.0286, 0.019
+IMP_MARGIN, EXP_MARGIN = 0.028, 0.019
 # Battery model for the simulation. Efficiencies are measured, not from
 # config: 10 Aug-13 Oct 2026 the battery's SOC rose 8.66%/kWh charged and fell
 # 9.01%/kWh discharged (round trip 0.98).

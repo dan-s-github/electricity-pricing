@@ -110,9 +110,6 @@ folder isn't reachable over ssh, so the script writes the add-on config with
 ha-dev's ids to `emhass/config.dev.json` for pasting in. ha-dev has no
 Helios forecast, so EMHASS gets no PV forecast there.
 
-The `(template)` sensors are the old formulas, kept only for that
-comparison. Delete them once the integration's prices match.
-
 ## Things that will go stale
 
 - **Rates are constants.** Network, transmission, levy, loss factor and GST

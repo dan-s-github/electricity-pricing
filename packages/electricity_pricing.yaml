@@ -116,16 +116,6 @@ template:
         availability: "{{ has_value('binary_sensor.home_peak') }}"
         state: "{{ is_state('binary_sensor.home_peak', 'on') }}"
 
-      # Template copies of the replaced sensors, kept only to compare them
-      # with Electricity Billing NZ. Delete them after the parity check.
-      - name: "Vector peak period (template)"
-        unique_id: vector_peak_period_template
-        state: >
-          {% set m = now().month %}
-          {% set h = now().hour %}
-
-          {{ (m in [5, 9] and 17 <= h < 22) or (m in [6, 7, 8] and (7 <= h < 11 or 17 <= h < 22)) }}
-
       - name: "Battery grid charge recommended"
         unique_id: battery_grid_charge_recommended
         icon: mdi:battery-charging-outline
@@ -269,46 +259,10 @@ template:
             {{ v | round(5) }}
           {% endif %}
 
-      - name: "Electricity import price (template)"
-        unique_id: electricity_import_price_template
-        unit_of_measurement: "NZD/kWh"
-        state_class: measurement
-        icon: mdi:transmission-tower-import
-        availability: "{{ is_number(states('sensor.electricity_spot_price')) }}"
-        state: >
-          {% set gst = 1.15 %}
-          {% set loss = 0.0476 %}
-          {% set import_margin = 0.028 %}
-          {% set peak_rate = 0.1504 %}
-          {% set offpeak_rate = 0.0457 %}
-          {% set transmission = 0.0302 %}
-          {% set levy = 0.002 %}
-          {% set spot = states('sensor.electricity_spot_price') | float %}
-          {% set network = peak_rate if is_state('binary_sensor.vector_peak_period_template', 'on') else offpeak_rate %}
-
-          {{ (((spot + import_margin) * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
-
-      - name: "Electricity export price (template)"
-        unique_id: electricity_export_price_template
-        unit_of_measurement: "NZD/kWh"
-        state_class: measurement
-        icon: mdi:transmission-tower-export
-        availability: "{{ is_number(states('sensor.electricity_spot_price')) }}"
-        state: >
-          {% set gst = 1.15 %}
-          {% set peak_credit = 0.0524 %}
-          {% set export_margin = 0.019 %}
-          {% set spot = states('sensor.electricity_spot_price') | float %}
-          {% set credit = peak_credit if is_state('binary_sensor.vector_peak_period_template', 'on') else 0 %}
-
-          {{ ((spot - export_margin + credit) * gst) | round(4) }}
-
-      # `electricity_import_price` above (settled) is one trading period behind
+      # `electricity_spot_price` above (settled) is one trading period behind
       # real time - correct for cost accounting (matches the bill), wrong for a
-      # live on/off decision. These two mirror it but source from the live
-      # price sensor, which tracks the current period instead of the last
-      # completed one - used for the battery charge/arbitrage decision, not
-      # for costing.
+      # live on/off decision. This one sources from the live price sensor,
+      # which tracks the current period instead of the last completed one.
       - name: "Electricity spot price (live)"
         unique_id: electricity_spot_price_live
         unit_of_measurement: "NZD/kWh"
@@ -327,31 +281,6 @@ template:
           {% else %}
             {{ v | round(5) }}
           {% endif %}
-
-      - name: "Electricity import price (live, template)"
-        unique_id: electricity_import_price_live_template
-        unit_of_measurement: "NZD/kWh"
-        state_class: measurement
-        icon: mdi:transmission-tower-import
-        availability: "{{ is_number(states('sensor.electricity_spot_price_live')) }}"
-        state: >
-          {% set gst = 1.15 %}
-          {% set loss = 0.0476 %}
-          {% set import_margin = 0.028 %}
-          {% set peak_rate = 0.1504 %}
-          {% set offpeak_rate = 0.0457 %}
-          {% set transmission = 0.0302 %}
-          {% set levy = 0.002 %}
-          {% set spot = states('sensor.electricity_spot_price_live') | float %}
-          {% set network = peak_rate if is_state('binary_sensor.vector_peak_period_template', 'on') else offpeak_rate %}
-
-          {{ (((spot + import_margin) * (1 + loss) + network + transmission + levy) * gst) | round(4) }}
-
-      - name: "Electricity fixed daily charge (template)"
-        unique_id: electricity_fixed_daily_charge_template
-        unit_of_measurement: "NZD/day"
-        icon: mdi:calendar-today
-        state: "{{ ((0.90 + 0.35 + 0.15) * 1.15) | round(4) }}"
 
       # Billing-cycle average energy rates, to set against the bill's
       # "Low ecoWHOLESALE" and "ecoWHOLESALE Export" lines. The billing

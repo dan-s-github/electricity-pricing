@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install packages/electricity_pricing.yaml on ha-dev, next to Electricity
-# Billing NZ, for the parity check. ha-dev differs from the Pi:
+# Billing NZ. ha-dev differs from the Pi:
 #   - it loads packages from /config/packages, not /config/integrations
 #   - its Alpha ESS entities have a longer prefix, so the ids are mapped
 #   - its Alpha ESS integration reaches the real inverter, so the battery

@@ -52,7 +52,8 @@ Custom integrations:
   dashboard charts
 
 Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
-(tested on v0.18.8).
+(tested on v0.18.11; 0.18.10 and later need the API token secret
+described under [EMHASS](#emhass) below).
 
 ## Install
 
@@ -87,7 +88,17 @@ Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
 
 1. Copy `emhass/config.json` to `/addon_configs/5b918bf2_emhass/config.json`
    and restart the add-on.
-2. Copy `packages/emhass.yaml` into `/config/integrations/` next to the
+2. Add the add-on's API token to `secrets.yaml`, as the whole
+   `Authorization` header value. The token is shown in the EMHASS web UI
+   (or is whatever you set as the add-on's `emhass_api_token` option):
+
+   ```yaml
+   emhass_api_authorization: "Bearer <emhass_api_token>"
+   ```
+
+   EMHASS 0.18.10 and later reject calls without it, and `ha core check`
+   fails on `packages/emhass.yaml` until the secret exists.
+3. Copy `packages/emhass.yaml` into `/config/integrations/` next to the
    pricing package, then run `ha core check` and restart. It
    runs at :01 and :31 past each hour and publishes `sensor.p_batt_forecast`,
    `sensor.soc_batt_forecast`, `sensor.p_grid_forecast` and related sensors.

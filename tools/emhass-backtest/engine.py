@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import pathlib
+import shlex
 import subprocess
 import time
 
@@ -110,7 +111,7 @@ def dry_run(host, load_cost, prod_price, pv, load, soc_init, soc_final=0.12):
                        "pv_power_forecast": list(map(float, pv)),
                        "load_power_forecast": list(map(float, load))}).encode()
     remote = (f"curl -s -X POST -H 'Content-Type: application/json' "
-              f"-H 'Authorization: Bearer {_api_token(host)}' --data-binary @- "
+              f"-H {shlex.quote(f'Authorization: Bearer {_api_token(host)}')} --data-binary @- "
               f"{ADDON_URL}/api/v1/dry-run/naive-mpc-optim")
     for _ in range(10):
         res = json.loads(_ssh(host, remote, body))

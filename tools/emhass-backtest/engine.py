@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import pathlib
+import shlex
 import subprocess
 import time
 
@@ -20,6 +21,7 @@ REPO_CONF = json.loads(REPO_CONFIG.read_text())
 # Reached over SSH from the HA host, which is on the add-on's network
 ADDON_URL = "http://5b918bf2-emhass:5000"
 ADDON_CONFIG = "/addon_configs/5b918bf2_emhass/config.json"
+ADDON_CONTAINER = "app_5b918bf2_emhass"
 
 logger = logging.getLogger("backtest")
 logger.setLevel(logging.ERROR)
@@ -80,6 +82,22 @@ def addon_config(host):
     return json.loads(_ssh(host, f"cat {ADDON_CONFIG}"))
 
 
+_tokens = {}
+
+
+def _api_token(host):
+    """The add-on's API token (EMHASS >= 0.18.10 rejects calls without it).
+
+    The emhass_api_token option if set, otherwise the token the add-on
+    generated at first start.
+    """
+    if host not in _tokens:
+        options = json.loads(_ssh(host, f"sudo -n docker exec {ADDON_CONTAINER} cat /data/options.json"))
+        _tokens[host] = options.get("emhass_api_token") or _ssh(
+            host, f"sudo -n docker exec {ADDON_CONTAINER} cat /data/emhass_api_token").decode().strip()
+    return _tokens[host]
+
+
 def dry_run(host, load_cost, prod_price, pv, load, soc_init, soc_final=0.12):
     """The same solve as plan(), done by the add-on's dry-run endpoint (EMHASS >= 0.18.7).
 
@@ -92,7 +110,8 @@ def dry_run(host, load_cost, prod_price, pv, load, soc_init, soc_final=0.12):
                        "prod_price_forecast": list(map(float, prod_price)),
                        "pv_power_forecast": list(map(float, pv)),
                        "load_power_forecast": list(map(float, load))}).encode()
-    remote = (f"curl -s -X POST -H 'Content-Type: application/json' --data-binary @- "
+    remote = (f"curl -s -X POST -H 'Content-Type: application/json' "
+              f"-H {shlex.quote(f'Authorization: Bearer {_api_token(host)}')} --data-binary @- "
               f"{ADDON_URL}/api/v1/dry-run/naive-mpc-optim")
     for _ in range(10):
         res = json.loads(_ssh(host, remote, body))

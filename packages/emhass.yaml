@@ -7,16 +7,24 @@
 #   load_cost_forecast  - landed import price per trading period (day-ahead
 #                         forecast + the same network/levy/GST build-up as
 #                         electricity_import_price in electricity_pricing.yaml)
-#   prod_price_forecast - export price per trading period (spot + peak credit)
+#   prod_price_forecast - export price per trading period (spot - retailer
+#                         margin + peak credit)
 #   pv_power_forecast   - Helios forecast curve, W
 # All three are {timestamp: value} maps, which EMHASS aligns onto its own
 # 30-min grid, so list lengths never have to match exactly.
+#
+# Since EMHASS 0.18.10 every API call needs the add-on's API token (generated
+# at first start and shown in the EMHASS web UI, or set as emhass_api_token).
+# secrets.yaml holds it as the whole header value:
+#   emhass_api_authorization: "Bearer <emhass_api_token>"
 
 rest_command:
   emhass_naive_mpc_optim:
     url: http://5b918bf2-emhass:5000/action/naive-mpc-optim
     method: post
     timeout: 120
+    headers:
+      Authorization: !secret emhass_api_authorization
     content_type: application/json
     payload: >-
       {%- set gst = 1.15 -%}
@@ -26,6 +34,8 @@ rest_command:
       {%- set transmission = 0.0302 -%}
       {%- set levy = 0.002 -%}
       {%- set peak_credit = 0.0524 -%}
+      {%- set import_margin = 0.028 -%}
+      {%- set export_margin = 0.019 -%}
       {%- set ns = namespace(cost=[], prod=[], pv=[]) -%}
 
       {#- Current trading period: live price, already landed -#}
@@ -37,7 +47,7 @@ rest_command:
       {%- endif -%}
       {%- if is_number(states('sensor.electricity_spot_price_live')) -%}
         {%- set spot_now = states('sensor.electricity_spot_price_live') | float -%}
-        {%- set ns.prod = ns.prod + [(period_now, ((spot_now + (peak_credit if peak_now else 0)) * gst) | round(4))] -%}
+        {%- set ns.prod = ns.prod + [(period_now, ((spot_now - export_margin + (peak_credit if peak_now else 0)) * gst) | round(4))] -%}
       {%- endif -%}
 
       {#- Future trading periods: day-ahead forecast (c/kWh). Skip the current
@@ -52,8 +62,8 @@ rest_command:
                          or (dt.month in [6, 7, 8] and (7 <= dt.hour < 11 or 17 <= dt.hour < 22)) -%}
           {%- set spot = p.price / 100 -%}
           {%- set network = peak_rate if peak else offpeak_rate -%}
-          {%- set ns.cost = ns.cost + [(p.period_start, ((spot * (1 + loss) + network + transmission + levy) * gst) | round(4))] -%}
-          {%- set ns.prod = ns.prod + [(p.period_start, ((spot + (peak_credit if peak else 0)) * gst) | round(4))] -%}
+          {%- set ns.cost = ns.cost + [(p.period_start, (((spot + import_margin) * (1 + loss) + network + transmission + levy) * gst) | round(4))] -%}
+          {%- set ns.prod = ns.prod + [(p.period_start, ((spot - export_margin + (peak_credit if peak else 0)) * gst) | round(4))] -%}
         {%- endif -%}
       {%- endfor -%}
 
@@ -81,6 +91,8 @@ rest_command:
     url: http://5b918bf2-emhass:5000/action/publish-data
     method: post
     timeout: 60
+    headers:
+      Authorization: !secret emhass_api_authorization
     content_type: application/json
     payload: "{}"
 

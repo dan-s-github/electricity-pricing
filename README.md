@@ -43,13 +43,17 @@ Custom integrations:
   (tested on v0.8.5) for the inverter sensors, charge cap and grid-charge switch
 - [electricityinfo](https://github.com/dan-s-github/ha-electricityinfo-nz)
   for the ROS0221 settled, live and day-ahead prices
+- [Electricity Billing NZ](https://github.com/dan-s-github/ha-electricity-billing-nz)
+  for the landed prices, daily charge and peak flag. Name its config entry
+  "Home": the package reads `sensor.home_*` and `binary_sensor.home_peak`.
 - [Helios Forecast](https://github.com/ReikanYsora/Helios-Forecast),
   Solcast and Forecast.Solar for solar forecasts
 - [apexcharts-card](https://github.com/RomRider/apexcharts-card) for the
   dashboard charts
 
 Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
-(tested on v0.18.8).
+(tested on v0.19.0; 0.18.10 and later need the API token secret
+described under [EMHASS](#emhass) below).
 
 ## Install
 
@@ -84,18 +88,49 @@ Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
 
 1. Copy `emhass/config.json` to `/addon_configs/5b918bf2_emhass/config.json`
    and restart the add-on.
-2. Copy `packages/emhass.yaml` into `/config/integrations/` next to the
+2. Add the add-on's API token to `secrets.yaml`, as the whole
+   `Authorization` header value. The token is shown in the EMHASS web UI
+   (or is whatever you set as the add-on's `emhass_api_token` option):
+
+   ```yaml
+   emhass_api_authorization: "Bearer <emhass_api_token>"
+   ```
+
+   EMHASS 0.18.10 and later reject calls without it, and `ha core check`
+   fails on `packages/emhass.yaml` until the secret exists.
+3. Copy `packages/emhass.yaml` into `/config/integrations/` next to the
    pricing package, then run `ha core check` and restart. It
    runs at :01 and :31 past each hour and publishes `sensor.p_batt_forecast`,
    `sensor.soc_batt_forecast`, `sensor.p_grid_forecast` and related sensors.
 
+### Trying it on a dev instance
+
+`tools/deploy-dev.sh` installs the package on ha-dev next to the
+integration, for comparing the two. It maps the Alpha ESS entity ids to
+ha-dev's longer ones and leaves out the battery automations, so ha-dev
+never writes to the real inverter:
+
+```sh
+# once: keep the ha-dev token in the Keychain
+security add-generic-password -U -a "$USER" -s ha-dev-claude-code -w "$(op read 'op://Private/ha-dev-claude-code/credential')"
+tools/deploy-dev.sh --restart
+```
+
+Add `--emhass` to install `packages/emhass.yaml` too. The add-on's config
+folder isn't reachable over ssh, so the script writes the add-on config with
+ha-dev's ids to `emhass/config.dev.json` for pasting in. ha-dev has no
+Helios forecast, so EMHASS gets no PV forecast there.
+
 ## Things that will go stale
 
-- **Rates are constants.** Network, transmission, levy, loss factor and GST
-  are hardcoded in the price templates and again in the EMHASS request
-  payload. Check them against a real bill when Vector changes its pricing.
-- **Peak windows are hardcoded** to Vector's time-of-use schedule: May and
-  September evenings, June to August mornings and evenings, none otherwise.
+- **Some rates are still constants.** The live, forecast and nightly actual
+  prices come from Electricity Billing NZ. The EMHASS request payload and the
+  billing-cycle rate sensors still hardcode network, transmission, levy, loss
+  factor, margins and GST. Update them with the integration when Vector or
+  Ecotricity changes its pricing.
+- **The EMHASS payload's peak windows are hardcoded** to Vector's time-of-use
+  schedule: May and September evenings, June to August mornings and evenings,
+  none otherwise.
 - **Write order to the inverter matters.** The Alpha ESS integration sends
   the whole charge config on every write, so the automations always set
   the cap first and the switch last. See `docs/design-notes.md` before

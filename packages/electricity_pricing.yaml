@@ -367,6 +367,59 @@ template:
               states('sensor.helios_forecast_energy_day_' ~ ('1' if day == 'today' else '2')),
               states('sensor.energy_production_' ~ day)] | select('is_number') | map('float') | min | round(2) }}
 
+      # Electricity Billing NZ's forecast sensors carry each period's landed
+      # price (band, losses, margins, credits, GST in force) and tou_band.
+      # Both prices are for the day the next (or current) charge window
+      # serves: today until it ends, tomorrow after.
+      - name: "Overnight charge window price"
+        unique_id: overnight_charge_window_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:clock-outline
+        availability: "{{ state_attr('sensor.home_import_price_forecast', 'forecast') is not none }}"
+        state: >
+          {% set start_h = states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) %}
+          {% set end_h = states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) %}
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set target_date = now().date() if now().strftime('%H:%M:%S') < end else (now() + timedelta(days=1)).date() %}
+          {% set ns = namespace(total=0, count=0) %}
+          {% for p in state_attr('sensor.home_import_price_forecast', 'forecast') or [] %}
+            {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
+            {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
+              {% set ns.total = ns.total + p.price %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endfor %}
+          {# No periods means the day isn't published yet: unknown, not $0. #}
+          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else none }}
+
+      - name: "Forecast peak export price"
+        unique_id: forecast_peak_export_price
+        unit_of_measurement: "NZD/kWh"
+        state_class: measurement
+        icon: mdi:transmission-tower-export
+        availability: "{{ state_attr('sensor.home_export_price_forecast', 'forecast') is not none }}"
+        state: >
+          {% set end = states('time.al2002118050331_charge_end_time_1') %}
+          {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
+          {% set target_date = now().date() if now().strftime('%H:%M:%S') < end else (now() + timedelta(days=1)).date() %}
+          {% set ns = namespace(total=0, count=0) %}
+          {% for p in state_attr('sensor.home_export_price_forecast', 'forecast') or [] %}
+            {% set dt = as_datetime(p.period_start) %}
+            {% set dt = dt | as_local if dt else none %}
+            {% if dt and dt.date() == target_date and p.tou_band == 'peak' %}
+              {% set ns.total = ns.total + p.price %}
+              {% set ns.count = ns.count + 1 %}
+            {% endif %}
+          {% endfor %}
+          {# No peak periods (Oct-Apr, or the day isn't published yet) means no
+             forecast, not a 0 price: 0 would turn a negative live import price
+             into a positive arbitrage margin. Unknown makes the margin sensor
+             unavailable, which turns the arbitrage path off. #}
+          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else none }}
+
       - name: "Battery arbitrage margin"
         unique_id: battery_arbitrage_margin
         unit_of_measurement: "NZD/kWh"
@@ -381,98 +434,6 @@ template:
           {% set eff = states('input_number.battery_round_trip_efficiency') | float(90) / 100 %}
 
           {{ ((export_price * eff) - charge_price) | round(4) }}
-
-  # --- Forecast overnight charge and peak export prices ---
-  # Electricity Billing NZ's price_at prices each day-ahead forecast period
-  # with the rates in force for it, the same way the nightly actuals are
-  # priced, so a rate change can't show up as forecast error. Trigger-based
-  # because the template can't call actions. The half-hourly trigger moves
-  # the target day on when the charge window ends (on the hour or half hour).
-  - triggers:
-      - trigger: homeassistant
-        event: start
-      - trigger: event
-        event_type: event_template_reloaded
-      - trigger: state
-        entity_id:
-          - sensor.ros0221_c_kwh_day_ahead_forecast
-          - time.al2002118050331_charge_start_time_1
-          - time.al2002118050331_charge_end_time_1
-      - trigger: time_pattern
-        minutes: "/30"
-    actions:
-      - variables:
-          # The next (or current) charge window: today until it ends,
-          # tomorrow after. The peak export price is for the same day.
-          periods: >
-            {% set end = states('time.al2002118050331_charge_end_time_1') %}
-            {% set end = end if end is match('[0-9][0-9]:[0-9][0-9]') else '04:00:00' %}
-            {% set target_date = now().date() if now().strftime('%H:%M:%S') < end else (now() + timedelta(days=1)).date() %}
-            {% set ns = namespace(rows=[]) %}
-            {% for p in state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') or [] %}
-              {% set dt = as_datetime(p.period_start) %}
-              {% set dt = dt | as_local if dt else none %}
-              {% if dt and dt.date() == target_date %}
-                {% set ns.rows = ns.rows + [{'start': dt.isoformat(), 'hour': dt.hour, 'spot': p.price}] %}
-              {% endif %}
-            {% endfor %}
-            {{ ns.rows }}
-          start_h: "{{ states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) }}"
-          end_h: "{{ states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) }}"
-          priced: []
-          failed: 0
-          price: null
-      - repeat:
-          for_each: "{{ periods }}"
-          sequence:
-            # A failed call would otherwise abort the run and leave both
-            # sensors on their last value, a stale price the arbitrage logic
-            # could act on. Count failures and go unknown instead.
-            - variables:
-                price: null
-            - action: electricity_billing_nz.price_at
-              continue_on_error: true
-              data:
-                config_entry_id: "{{ config_entry_id('sensor.home_import_price') }}"
-                timestamp: "{{ repeat.item.start }}"
-                spot: "{{ repeat.item.spot }}"
-                spot_unit: c/kWh
-              response_variable: price
-            - variables:
-                failed: "{{ failed + (0 if price else 1) }}"
-                priced: >
-                  {{ priced + ([{'overnight': start_h <= repeat.item.hour < end_h,
-                                 'peak': price.export.tou_band == 'peak',
-                                 'import_price': price.import_price, 'export_price': price.export_price}]
-                               if price else []) }}
-      - variables:
-          overnight_forecast: >
-            {% set rows = priced | selectattr('overnight') | map(attribute='import_price') | list %}
-            {{ (rows | sum / rows | length) | round(4) if rows and failed == 0 else 'none' }}
-          peak_export_forecast: >
-            {% set rows = priced | selectattr('peak') | map(attribute='export_price') | list %}
-            {{ (rows | sum / rows | length) | round(4) if rows and failed == 0 else 'none' }}
-    sensor:
-      - name: "Overnight charge window price"
-        unique_id: overnight_charge_window_price
-        unit_of_measurement: "NZD/kWh"
-        state_class: measurement
-        icon: mdi:clock-outline
-        availability: "{{ state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') is not none }}"
-        # No periods means the day isn't published yet: unknown, not $0.
-        state: "{{ overnight_forecast if overnight_forecast is number else none }}"
-
-      - name: "Forecast peak export price"
-        unique_id: forecast_peak_export_price
-        unit_of_measurement: "NZD/kWh"
-        state_class: measurement
-        icon: mdi:transmission-tower-export
-        availability: "{{ state_attr('sensor.ros0221_c_kwh_day_ahead_forecast', 'forecast') is not none }}"
-        # No peak periods (Oct-Apr, or the day isn't published yet) means no
-        # forecast, not a 0 price: 0 would turn a negative live import price
-        # into a positive arbitrage margin. Unknown makes the margin sensor
-        # unavailable, which turns the arbitrage path off.
-        state: "{{ peak_export_forecast if peak_export_forecast is number else none }}"
 
   # --- Charge-window active flag, re-evaluated every 5 min so it flips on time at the boundary ---
   - triggers:
@@ -618,21 +579,25 @@ template:
             {{ ns.rows }}
           start_h: "{{ states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) }}"
           end_h: "{{ states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) }}"
+          entry: "{{ config_entry_id('sensor.home_import_price') }}"
           priced: []
-          failed: 0
+          # continue_on_error doesn't cover a missing service or entry
+          # (ServiceNotFound, schema errors), so check the integration is up
+          # first and count it as a failure if not.
+          failed: "{{ 0 if entry and has_value('sensor.home_import_price') else 1 }}"
           price: null
       - repeat:
-          for_each: "{{ periods }}"
+          for_each: "{{ periods if failed == 0 else [] }}"
           sequence:
             # A failed call would otherwise abort the run and leave all four
             # sensors on yesterday's values. Count failures and make them
-            # unavailable instead, like the forecast block above.
+            # unavailable instead.
             - variables:
                 price: null
             - action: electricity_billing_nz.price_at
               continue_on_error: true
               data:
-                config_entry_id: "{{ config_entry_id('sensor.home_import_price') }}"
+                config_entry_id: "{{ entry }}"
                 timestamp: "{{ repeat.item.start }}"
                 spot: "{{ repeat.item.spot }}"
                 spot_unit: c/kWh
@@ -656,14 +621,14 @@ template:
         unique_id: actual_overnight_window_price
         unit_of_measurement: "NZD/kWh"
         icon: mdi:chart-line
-        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none and failed == 0 }}"
+        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none and failed == 0 and periods | count > 0 }}"
         state: "{{ overnight_actual }}"
 
       - name: "Actual peak export window price"
         unique_id: actual_peak_export_window_price
         unit_of_measurement: "NZD/kWh"
         icon: mdi:chart-line
-        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none and failed == 0 }}"
+        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none and failed == 0 and periods | count > 0 }}"
         state: "{{ peak_export_actual }}"
 
       - name: "Overnight price forecast accuracy"
@@ -675,7 +640,7 @@ template:
         availability: >
           {{ states.input_number.overnight_price_forecast_snapshot is not none
              and now() - states.input_number.overnight_price_forecast_snapshot.last_updated < timedelta(hours=24)
-             and failed == 0 }}
+             and failed == 0 and periods | count > 0 }}
         attributes:
           forecast: "{{ states('input_number.overnight_price_forecast_snapshot') | float(0) }}"
           actual: "{{ overnight_actual }}"
@@ -689,7 +654,7 @@ template:
         unique_id: peak_export_price_forecast_accuracy
         unit_of_measurement: "NZD/kWh"
         icon: mdi:target
-        availability: "{{ failed == 0 }}"
+        availability: "{{ failed == 0 and periods | count > 0 }}"
         attributes:
           forecast: "{{ states('input_number.peak_export_price_forecast_snapshot') | float(0) }}"
           actual: "{{ peak_export_actual }}"
@@ -747,10 +712,18 @@ automation:
   - alias: "Utility meter tariff follows Vector peak"
     id: utility_meter_tariff_follows_vector_peak
     triggers:
+      # Ignore unavailable/unknown: the action would read them as off-peak
+      # and book peak energy to the off-peak meters during an outage.
       - trigger: state
         entity_id: binary_sensor.vector_peak_period
+        not_to:
+          - unavailable
+          - unknown
       - trigger: homeassistant
         event: start
+    conditions:
+      - condition: template
+        value_template: "{{ has_value('binary_sensor.vector_peak_period') }}"
     actions:
       - action: select.select_option
         target:

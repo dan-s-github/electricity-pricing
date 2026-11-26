@@ -540,7 +540,9 @@ template:
             {{ (prev + (new - old) * states('sensor.electricity_export_price') | float(0)) | round(4) }}
           {% endif %}
 
-  # --- Nightly accuracy: solar forecasts + price forecasts, snapshot vs actual ---
+  # --- Nightly accuracy: solar forecasts, snapshot vs actual ---
+  # Kept apart from the price block below so a failing price_at call
+  # can't stop these updating.
   - triggers:
       - trigger: time
         at: "23:55:00"
@@ -584,72 +586,65 @@ template:
 
           {{ ((actual - forecast) / forecast * 100) | round(1) if forecast > 0 else 0 }}
 
+  # --- Nightly accuracy: price forecasts, snapshot vs actual ---
+  - triggers:
+      - trigger: time
+        at: "23:55:00"
+    actions:
+      # Electricity Billing NZ's price_at prices each of today's settled
+      # periods with the band, losses, margins, credits and GST in force for
+      # it. Its tou_band also picks the peak export periods, so the windows
+      # follow the network's schedule instead of being hardcoded here.
+      - variables:
+          periods: >
+            {% set ns = namespace(rows=[]) %}
+            {% for p in state_attr('sensor.ros0221_c_kwh_settled_price', 'history') or [] %}
+              {% set dt = as_datetime(p.period_start) %}
+              {% set dt = dt | as_local if dt else none %}
+              {% if dt and dt.date() == now().date() %}
+                {% set ns.rows = ns.rows + [{'start': dt.isoformat(), 'hour': dt.hour, 'spot': p.price}] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.rows }}
+          start_h: "{{ states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) }}"
+          end_h: "{{ states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) }}"
+          priced: []
+      - repeat:
+          for_each: "{{ periods }}"
+          sequence:
+            - action: electricity_billing_nz.price_at
+              data:
+                config_entry_id: "{{ config_entry_id('sensor.home_import_price') }}"
+                timestamp: "{{ repeat.item.start }}"
+                spot: "{{ repeat.item.spot }}"
+                spot_unit: c/kWh
+              response_variable: price
+            - variables:
+                priced: >
+                  {{ priced + [{'overnight': start_h <= repeat.item.hour < end_h,
+                                'peak': price.export.tou_band == 'peak',
+                                'import_price': price.import_price, 'export_price': price.export_price}] }}
+      - variables:
+          overnight_actual: >
+            {% set rows = priced | selectattr('overnight') | map(attribute='import_price') | list %}
+            {{ (rows | sum / rows | length) | round(4) if rows else 0 }}
+          peak_export_actual: >
+            {% set rows = priced | selectattr('peak') | map(attribute='export_price') | list %}
+            {{ (rows | sum / rows | length) | round(4) if rows else 0 }}
+    sensor:
       - name: "Actual overnight window price"
         unique_id: actual_overnight_window_price
         unit_of_measurement: "NZD/kWh"
         icon: mdi:chart-line
         availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none }}"
-        state: >
-          {% set gst = 1.15 %}
-          {% set loss = 0.0476 %}
-          {% set import_margin = 0.028 %}
-          {% set offpeak_rate = 0.0457 %}
-          {% set transmission = 0.0302 %}
-          {% set levy = 0.002 %}
-          {% set periods = state_attr('sensor.ros0221_c_kwh_settled_price', 'history') or [] %}
-          {% set start_h = states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) %}
-          {% set end_h = states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) %}
-          {% set target_date = now().date() %}
-          {% set ns = namespace(total=0, count=0) %}
-
-          {% for p in periods %}
-            {% set dt = as_datetime(p.period_start) %}
-            {% set dt = dt | as_local if dt else none %}
-            {% if dt and dt.date() == target_date and start_h <= dt.hour < end_h %}
-              {% set spot = p.price / 100 %}
-              {% set landed = ((spot + import_margin) * (1 + loss) + offpeak_rate + transmission + levy) * gst %}
-              {% set ns.total = ns.total + landed %}
-              {% set ns.count = ns.count + 1 %}
-            {% endif %}
-          {% endfor %}
-          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else 0 }}
+        state: "{{ overnight_actual }}"
 
       - name: "Actual peak export window price"
         unique_id: actual_peak_export_window_price
         unit_of_measurement: "NZD/kWh"
         icon: mdi:chart-line
         availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none }}"
-        state: >
-          {% set gst = 1.15 %}
-          {% set peak_credit = 0.0524 %}
-          {% set export_margin = 0.019 %}
-          {% set periods = state_attr('sensor.ros0221_c_kwh_settled_price', 'history') or [] %}
-          {% set target_date = now().date() %}
-          {% set target_month = target_date.month %}
-
-          {% if target_month in [5, 9] %}
-            {% set windows = [(17, 22)] %}
-          {% elif target_month in [6, 7, 8] %}
-            {% set windows = [(7, 11), (17, 22)] %}
-          {% else %}
-            {% set windows = [] %}
-          {% endif %}
-          {% set ns = namespace(total=0, count=0) %}
-          {% for p in periods %}
-            {% set dt = as_datetime(p.period_start) %}
-            {% set dt = dt | as_local if dt else none %}
-            {% if dt and dt.date() == target_date %}
-              {% for w in windows %}
-                {% if w[0] <= dt.hour < w[1] %}
-                  {% set spot = p.price / 100 %}
-                  {% set landed = (spot - export_margin + peak_credit) * gst %}
-                  {% set ns.total = ns.total + landed %}
-                  {% set ns.count = ns.count + 1 %}
-                {% endif %}
-              {% endfor %}
-            {% endif %}
-          {% endfor %}
-          {{ (ns.total / ns.count) | round(4) if ns.count > 0 else 0 }}
+        state: "{{ peak_export_actual }}"
 
       - name: "Overnight price forecast accuracy"
         unique_id: overnight_price_forecast_accuracy
@@ -662,10 +657,10 @@ template:
              and now() - states.input_number.overnight_price_forecast_snapshot.last_updated < timedelta(hours=24) }}
         attributes:
           forecast: "{{ states('input_number.overnight_price_forecast_snapshot') | float(0) }}"
-          actual: "{{ states('sensor.actual_overnight_window_price') | float(0) }}"
+          actual: "{{ overnight_actual }}"
         state: >
           {% set forecast = states('input_number.overnight_price_forecast_snapshot') | float(0) %}
-          {% set actual = states('sensor.actual_overnight_window_price') | float(0) %}
+          {% set actual = overnight_actual | float(0) %}
 
           {{ (actual - forecast) | round(4) }}
 
@@ -675,10 +670,10 @@ template:
         icon: mdi:target
         attributes:
           forecast: "{{ states('input_number.peak_export_price_forecast_snapshot') | float(0) }}"
-          actual: "{{ states('sensor.actual_peak_export_window_price') | float(0) }}"
+          actual: "{{ peak_export_actual }}"
         state: >
           {% set forecast = states('input_number.peak_export_price_forecast_snapshot') | float(0) %}
-          {% set actual = states('sensor.actual_peak_export_window_price') | float(0) %}
+          {% set actual = peak_export_actual | float(0) %}
 
           {{ (actual - forecast) | round(4) }}
 

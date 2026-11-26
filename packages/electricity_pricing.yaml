@@ -619,10 +619,18 @@ template:
           start_h: "{{ states('time.al2002118050331_charge_start_time_1').split(':')[0] | int(0) }}"
           end_h: "{{ states('time.al2002118050331_charge_end_time_1').split(':')[0] | int(4) }}"
           priced: []
+          failed: 0
+          price: null
       - repeat:
           for_each: "{{ periods }}"
           sequence:
+            # A failed call would otherwise abort the run and leave all four
+            # sensors on yesterday's values. Count failures and make them
+            # unavailable instead, like the forecast block above.
+            - variables:
+                price: null
             - action: electricity_billing_nz.price_at
+              continue_on_error: true
               data:
                 config_entry_id: "{{ config_entry_id('sensor.home_import_price') }}"
                 timestamp: "{{ repeat.item.start }}"
@@ -630,10 +638,12 @@ template:
                 spot_unit: c/kWh
               response_variable: price
             - variables:
+                failed: "{{ failed + (0 if price else 1) }}"
                 priced: >
-                  {{ priced + [{'overnight': start_h <= repeat.item.hour < end_h,
-                                'peak': price.export.tou_band == 'peak',
-                                'import_price': price.import_price, 'export_price': price.export_price}] }}
+                  {{ priced + ([{'overnight': start_h <= repeat.item.hour < end_h,
+                                 'peak': price.export.tou_band == 'peak',
+                                 'import_price': price.import_price, 'export_price': price.export_price}]
+                               if price else []) }}
       - variables:
           overnight_actual: >
             {% set rows = priced | selectattr('overnight') | map(attribute='import_price') | list %}
@@ -646,14 +656,14 @@ template:
         unique_id: actual_overnight_window_price
         unit_of_measurement: "NZD/kWh"
         icon: mdi:chart-line
-        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none }}"
+        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none and failed == 0 }}"
         state: "{{ overnight_actual }}"
 
       - name: "Actual peak export window price"
         unique_id: actual_peak_export_window_price
         unit_of_measurement: "NZD/kWh"
         icon: mdi:chart-line
-        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none }}"
+        availability: "{{ state_attr('sensor.ros0221_c_kwh_settled_price', 'history') is not none and failed == 0 }}"
         state: "{{ peak_export_actual }}"
 
       - name: "Overnight price forecast accuracy"
@@ -664,7 +674,8 @@ template:
         # so a snapshot older than a day belongs to an earlier window.
         availability: >
           {{ states.input_number.overnight_price_forecast_snapshot is not none
-             and now() - states.input_number.overnight_price_forecast_snapshot.last_updated < timedelta(hours=24) }}
+             and now() - states.input_number.overnight_price_forecast_snapshot.last_updated < timedelta(hours=24)
+             and failed == 0 }}
         attributes:
           forecast: "{{ states('input_number.overnight_price_forecast_snapshot') | float(0) }}"
           actual: "{{ overnight_actual }}"
@@ -678,6 +689,7 @@ template:
         unique_id: peak_export_price_forecast_accuracy
         unit_of_measurement: "NZD/kWh"
         icon: mdi:target
+        availability: "{{ failed == 0 }}"
         attributes:
           forecast: "{{ states('input_number.peak_export_price_forecast_snapshot') | float(0) }}"
           actual: "{{ peak_export_actual }}"

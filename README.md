@@ -123,11 +123,14 @@ Helios forecast, so EMHASS gets no PV forecast there.
 
 ## Things that will go stale
 
-- **Rates are constants.** Network, transmission, levy, loss factor and GST
-  are hardcoded in the price templates and again in the EMHASS request
-  payload. Check them against a real bill when Vector changes its pricing.
-- **Peak windows are hardcoded** to Vector's time-of-use schedule: May and
-  September evenings, June to August mornings and evenings, none otherwise.
+- **Some rates are still constants.** The live, forecast and nightly actual
+  prices come from Electricity Billing NZ. The EMHASS request payload and the
+  billing-cycle rate sensors still hardcode network, transmission, levy, loss
+  factor, margins and GST. Update them with the integration when Vector or
+  Ecotricity changes its pricing.
+- **The EMHASS payload's peak windows are hardcoded** to Vector's time-of-use
+  schedule: May and September evenings, June to August mornings and evenings,
+  none otherwise.
 - **Write order to the inverter matters.** The Alpha ESS integration sends
   the whole charge config on every write, so the automations always set
   the cap first and the switch last. See `docs/design-notes.md` before

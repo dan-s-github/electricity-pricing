@@ -27,8 +27,10 @@ From the source bill (Vector network charges + ecoWHOLESALE energy + other charg
 - **GST:** 15%, applied last, multiplicatively (`* 1.15`) — the bill totals
   are GST-inclusive
 
-All of this is hardcoded as constants inside the price sensor templates,
-not pulled from anywhere live. **These will go stale** — Vector's rates
+Electricity Billing NZ now applies all of this to the live and forecast
+prices and to the nightly actuals (its `price_at` action prices any
+period). The EMHASS request payload and the billing-cycle rate sensors still
+hardcode it as constants. **Those will go stale** — Vector's rates
 changed once already (1 Apr 2026) during this build. No mechanism currently
 alerts on rate changes; revisit periodically against a real bill.
 
@@ -80,8 +82,9 @@ has `UN` (import) and `EG` (export) channels, with no `CN` controlled
 channel. Strictly, the ICP fits **ARHLU** (uncontrolled): off-peak $0.0466,
 peak $0.1513, so +$0.0009/kWh, about $1-2/year. The config follows what the
 bill charges (ARHLC). If a bill ever shows the ARHLU rates, update
-`peak_rate` and `offpeak_rate` in every template in
-`packages/electricity_pricing.yaml` and `packages/emhass.yaml`.
+the integration's network rates, and `peak_rate` and `offpeak_rate` in the
+templates that still have them (the billing-cycle import rate in
+`packages/electricity_pricing.yaml`, and `packages/emhass.yaml`).
 
 The DER category (ARHLD: $0.0393 / $0.1440) needs a device of 1.2 kW or
 more that the retailer can turn off remotely, and the retailer must have

@@ -52,7 +52,7 @@ Custom integrations:
   dashboard charts
 
 Optional: the [EMHASS add-on](https://github.com/davidusb-geek/emhass-add-on)
-(tested on v0.18.11; 0.18.10 and later need the API token secret
+(tested on v0.19.0; 0.18.10 and later need the API token secret
 described under [EMHASS](#emhass) below).
 
 ## Install

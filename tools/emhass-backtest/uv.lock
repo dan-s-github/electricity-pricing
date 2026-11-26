@@ -262,7 +262,7 @@ wheels = [
 
 [[package]]
 name = "emhass"
-version = "0.18.11"
+version = "0.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -288,9 +288,9 @@ dependencies = [
     { name = "waitress" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/9c/42efc834ff606e9644774a59b72e3f93d3f8dd2ba0ac6571ba62b322b11f/emhass-0.18.11.tar.gz", hash = "sha256:1f0694d310bb82124caf3a68df95cebab213372d5e8e6ab66e62bb1d43e9eef8", size = 2670464, upload-time = "2026-11-17T23:29:15.325Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/98/03c7e68eef3d47e2637d57bfbf4d0ddf1bc3e49f8fd80f82131084043677/emhass-0.19.0.tar.gz", hash = "sha256:5e698793f1d74a970b296ea27cb1cb1d6db3e84b7bd70371033020573bc19305", size = 2870985, upload-time = "2026-11-25T18:10:51.77Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/b9/134624cc2628a60fcaf9308b05031b3833ce7565b3b9d81c6ac642404855/emhass-0.18.11-py3-none-any.whl", hash = "sha256:b2a6fd0cd2f9d8dd1dc38475fe627ca2e8e4eaecdfeecd18c44439d73f3f906d", size = 2683662, upload-time = "2026-11-17T23:29:13.379Z" },
+    { url = "https://files.pythonhosted.org/packages/99/87/32eb1bcdfd2098a35cf319e38c5b6e8115034e266ff743646396b90371be/emhass-0.19.0-py3-none-any.whl", hash = "sha256:063b1018a7702285955142326940d873fbcefd381e989ed2b454122f685743a2", size = 2896449, upload-time = "2026-11-25T18:10:49.682Z" },
 ]
 
 [[package]]
@@ -308,7 +308,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "cvxpy", specifier = "==1.9.3" },
-    { name = "emhass", specifier = "==0.18.11" },
+    { name = "emhass", specifier = "==0.19.0" },
     { name = "highspy", specifier = "==1.16.0" },
     { name = "numpy", specifier = "==2.5.5" },
     { name = "pandas", specifier = "==3.1.1" },
